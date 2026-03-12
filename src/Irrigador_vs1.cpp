@@ -28,7 +28,7 @@ const long gmtOffset_sec = -10800;
 const int daylightOffset_sec = 0;
 
 long timerIntervaloBomba = 10000;   // Tamanho do ciclo para ligar e desligar bomba
-#define NOME_IRRIGADOR "IRRIGADOR_VS_v1"  // Nome do irrigador
+#define NOME_IRRIGADOR "IRRIGADOR_VS1"  // Nome do irrigador
 float indiceThreshold = 40;
 long intervaloEnviarEmailTemp = 24;  // Valor em horas
 short qtdCiclosTimer = 12;
