@@ -26,6 +26,7 @@
 const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -10800;
 const int daylightOffset_sec = 0;
+const unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
 
 long timerIntervaloBomba = 10000;   // Tamanho do ciclo para ligar e desligar bomba
 #define NOME_IRRIGADOR "IRRIGADOR_VS1"  // Nome do irrigador
@@ -59,6 +60,7 @@ ESP_Mail_Session session;
 
 // Callback function to get the Email sending status
 void smtpCallback(SMTP_Status status);
+bool connectWiFiWithTimeout(unsigned long timeoutMs);
 
 const int output1 = 19;  // GPIO comando rele 1
 const int output2 = 5;   // GPIO comando rele 2
@@ -69,26 +71,20 @@ const int humiditySensor2 = 34;
 // Default Threshold sensor1 Value
 String lastSensor1 = "0";
 String lastSensor2 = "0";
-String enableArmChecked1 = "checked";
-String enableArmChecked2 = "checked";
 
 String inputMessage1;
 String inputMessage2;
-String flagmudancaestadobomba1 = "true";
-String flagmudancaestadobomba2 = "true";
 long intervaloEnviarEmail = 3600000;
 
 long sensor1 = 0;
 long sensor2 = 0;
-short flagBomba2 = 0;
 short flagBomba1Travada = 0;
 short flagBomba2Travada = 0;
-short flagBxHumidade1 = 0;
-short flagBxHumidade2 = 0;
-short flag5 = 1;
-short flag6 = 1;
-short flag7 = 1;
-short flag8 = 1;
+bool flagBxHumidade1 = false;
+bool flagBxHumidade2 = false;
+bool histereseArmada1 = true;
+bool histereseArmada2 = true;
+bool flagAlertaBaixaUmidadePronto = true;
 
 // New variables for manual pump control
 bool manualPump1State = false; // Tracks manual state of Pump 1 (true = ON, false = OFF)
@@ -96,9 +92,11 @@ bool manualPump2State = false; // Tracks manual state of Pump 2 (true = ON, fals
 bool manualOverride1 = false;  // Indicates if Pump 1 is manually controlled
 bool manualOverride2 = false;  // Indicates if Pump 2 is manually controlled
 
-int medidasArray1[7];
-int medidasArray2[7];
-int sss;
+const int SENSOR_SAMPLE_SIZE = 5;
+int medidasArray1[SENSOR_SAMPLE_SIZE] = {0};
+int medidasArray2[SENSOR_SAMPLE_SIZE] = {0};
+int sampleIndex = 0;
+int sampleCount = 0;
 
 short flagEmail1 = 0; // flag para comandar o envio de email
 short flagEmail2 = 0; // flag para comandar o envio de email
@@ -258,25 +256,26 @@ void setup() {
   preferences.end();
 
   // Conectar ao WiFi
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(500);
+  connectWiFiWithTimeout(WIFI_CONNECT_TIMEOUT_MS);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("WiFi connected - Rede -> " + String(WIFI_SSID));
+    Serial.print("IP -> ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi indisponivel no boot. O sistema continuara sem bloqueio.");
   }
-  Serial.println();
-  Serial.println("WiFi connected - Rede -> " + String(WIFI_SSID));
-  Serial.print("IP -> ");
-  Serial.println(WiFi.localIP());
   Serial.println(__FILE__);
 
   // Configurar MDNS para OTA
-  if (!MDNS.begin(host)) {
-    Serial.println("Error setting up MDNS responder!");
-    while (1) {
-      delay(1000);
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!MDNS.begin(host)) {
+      Serial.println("Error setting up MDNS responder!");
+    } else {
+      Serial.println("mDNS responder started");
     }
+  } else {
+    Serial.println("mDNS nao iniciado (sem WiFi).");
   }
-  Serial.println("mDNS responder started");
 
   // Configurar rotas do servidor
   server.on("/", HTTP_GET, []() {
@@ -391,9 +390,13 @@ void setup() {
   html.replace("%THRESHOLD1%", processor("THRESHOLD1"));
   html.replace("%HUMIDITY_2%", processor("HUMIDITY_2"));
   html.replace("%THRESHOLD2%", processor("THRESHOLD2"));
-  String ip = WiFi.localIP().toString();
-  String assuntoparaemail = "Genius PowerUp! A unidade " + String(NOME_IRRIGADOR) + " acabou de ligar. Conectado no " + String(ip) + " " + String(__FILE__);
-  envioemail(html, assuntoparaemail);
+  if (WiFi.status() == WL_CONNECTED) {
+    String ip = WiFi.localIP().toString();
+    String assuntoparaemail = "Genius PowerUp! A unidade " + String(NOME_IRRIGADOR) + " acabou de ligar. Conectado no " + String(ip) + " " + String(__FILE__);
+    envioemail(html, assuntoparaemail);
+  } else {
+    Serial.println("Email de power-up nao enviado (sem WiFi).");
+  }
 }
 
 void loop() {
@@ -415,16 +418,22 @@ void loop() {
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis;
     // LEITURA DO SENSOR 1
-    long senstemp1 = analogRead(humiditySensor1);
-    medidasArray1[sss] = senstemp1;
-    sensor1 = (medidasArray1[1] + medidasArray1[2] + medidasArray1[3] + medidasArray1[4] + medidasArray1[5]) / 5;
-    long senstemp2 = analogRead(humiditySensor2);
-    medidasArray2[sss] = senstemp2;
-    sensor2 = (medidasArray2[1] + medidasArray2[2] + medidasArray2[3] + medidasArray2[4] + medidasArray2[5]) / 5;
-    sss++;
-    if (sss > 5) {
-      sss = 0;
+    medidasArray1[sampleIndex] = analogRead(humiditySensor1);
+    medidasArray2[sampleIndex] = analogRead(humiditySensor2);
+
+    sampleIndex = (sampleIndex + 1) % SENSOR_SAMPLE_SIZE;
+    if (sampleCount < SENSOR_SAMPLE_SIZE) {
+      sampleCount++;
     }
+
+    long soma1 = 0;
+    long soma2 = 0;
+    for (int i = 0; i < sampleCount; i++) {
+      soma1 += medidasArray1[i];
+      soma2 += medidasArray2[i];
+    }
+    sensor1 = soma1 / sampleCount;
+    sensor2 = soma2 / sampleCount;
 
     lastSensor1 = String(sensor1);
     lastSensor2 = String(sensor2);
@@ -451,21 +460,21 @@ void loop() {
   }
 
   // DEFINIR FLAG DE BAIXA UMIDADE
-  if (sensor1 > limiteCorrigidoMais1 && flag5 == 1) {
-    flagBxHumidade1 = 1;
-    flag5 = 0;
+  if (sensor1 > limiteCorrigidoMais1 && histereseArmada1) {
+    flagBxHumidade1 = true;
+    histereseArmada1 = false;
   }
-  if (sensor1 < limiteCorrigidoMenos1 && flag5 == 0) {
-    flagBxHumidade1 = 0;
-    flag5 = 1;
+  if (sensor1 < limiteCorrigidoMenos1 && !histereseArmada1) {
+    flagBxHumidade1 = false;
+    histereseArmada1 = true;
   }
-  if (sensor2 > limiteCorrigidoMais2 && flag6 == 1) {
-    flagBxHumidade2 = 1;
-    flag6 = 0;
+  if (sensor2 > limiteCorrigidoMais2 && histereseArmada2) {
+    flagBxHumidade2 = true;
+    histereseArmada2 = false;
   }
-  if (sensor2 < limiteCorrigidoMenos2 && flag6 == 0) {
-    flagBxHumidade2 = 0;
-    flag6 = 1;
+  if (sensor2 < limiteCorrigidoMenos2 && !histereseArmada2) {
+    flagBxHumidade2 = false;
+    histereseArmada2 = true;
   }
 
   // LIGAR BOMBA 1 E CONTAR
@@ -487,7 +496,7 @@ void loop() {
         }
       }
     }
-  } else if (flagBxHumidade1 == 1 && tempoBombaLigada == 1 && flagBomba1Travada == 0) {
+  } else if (flagBxHumidade1 && tempoBombaLigada == 1 && flagBomba1Travada == 0) {
     digitalWrite(output1, LOW);
     unsigned long currentMillis3 = millis();
     if (currentMillis3 - previousMillis3 >= 1000) {
@@ -523,7 +532,7 @@ void loop() {
         }
       }
     }
-  } else if (flagBxHumidade2 == 1 && tempoBombaLigada == 2 && flagBomba2Travada == 0) {
+  } else if (flagBxHumidade2 && tempoBombaLigada == 2 && flagBomba2Travada == 0) {
     digitalWrite(output2, LOW);
     unsigned long currentMillis4 = millis();
     if (currentMillis4 - previousMillis4 >= 1000) {
@@ -541,76 +550,95 @@ void loop() {
   }
 
   // ENVIO DE EMAIL QUANDO DA MUDANÇA DE ESTADO SENSOR 1
-  if (flagBxHumidade1 == 1 && flagEmail1 == 0) {
+  if (flagBxHumidade1 && flagEmail1 == 0) {
     String textoparaemail = String("Bomba ligada - Sensor1 -> " + String(sensor1) + " - Sensor2 -> " + String(sensor2) + " - dado inserido ->" + String(float(inputMessage1.toFloat())));
     String assuntoparaemail = String("Ligando a Bomba 1 - Mensagem do irrigador");
     Serial.println(textoparaemail);
     flagEmail1 = 1;
     envioemail(textoparaemail, assuntoparaemail);
   }
-  if (flagBxHumidade1 == 0 && flagEmail1 == 1) {
+  if (!flagBxHumidade1 && flagEmail1 == 1) {
     String textoparaemail = String("Bomba 1 funcionou por " + String(tempoB1Ligada) + " segundos. Dados do sensores - Sensor1 -> " + String(sensor1) + " - Sensor2 -> " + String(sensor2));
     String assuntoparaemail = String("Resumo da ativação da bomba 1. Funcionou por " + String(tempoB1Ligada) + " segundos. Status Bomba 1 Desligada");
     Serial.println(textoparaemail);
     tempoB1Ligada = 0;
     flagEmail1 = 0;
     envioemail(textoparaemail, assuntoparaemail);
-    flagmudancaestadobomba1 = String("true");
   }
 
   // ENVIO DE EMAIL QUANDO DA MUDANÇA DE ESTADO SENSOR 2
-  if (flagBxHumidade2 == 1 && flagEmail2 == 0) {
+  if (flagBxHumidade2 && flagEmail2 == 0) {
     String textoparaemail = String("Bomba ligada - Sensor1 -> " + String(sensor1) + " - Sensor2 -> " + String(sensor2) + " - dado inserido ->" + String(float(inputMessage2.toFloat())));
     String assuntoparaemail = String("Ligando a Bomba 2 - Mensagem do irrigador");
     Serial.println(textoparaemail);
     flagEmail2 = 1;
     envioemail(textoparaemail, assuntoparaemail);
   }
-  if (flagBxHumidade2 == 0 && flagEmail2 == 1) {
+  if (!flagBxHumidade2 && flagEmail2 == 1) {
     String textoparaemail = String("Bomba 2 funcionou por " + String(tempoB2Ligada) + " segundos. Dados do sensores - Sensor1 -> " + String(sensor1) + " - Sensor2 -> " + String(sensor2));
     String assuntoparaemail = String("Resumo da ativação da bomba 2. Funcionou por " + String(tempoB2Ligada) + " segundos. Status Bomba 2 Desligada");
     Serial.println(textoparaemail);
     tempoB2Ligada = 0;
     flagEmail2 = 0;
     envioemail(textoparaemail, assuntoparaemail);
-    flagmudancaestadobomba2 = String("true");
   }
 
   // Temporizador para enviar email com info do valor do sensor
   unsigned long currentMillis1 = millis();
   if (currentMillis1 - previousMillis1 >= intervaloEnviarEmail) {
-    Serial.println("Reiniciar WIFI pelo temporizador");
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) {
-      Serial.print(".");
-      delay(1000);
+    bool wifiReadyForEmail = true;
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi desconectado. Tentando reconectar com timeout...");
+      if (!connectWiFiWithTimeout(WIFI_CONNECT_TIMEOUT_MS)) {
+        Serial.println("Falha na reconexao WiFi. Email periodico nao enviado.");
+        wifiReadyForEmail = false;
+      }
     }
-    Serial.println();
-    Serial.println("WiFi connected.");
-    String ip = WiFi.localIP().toString();
-    String textoparaemail = String("Sens1> " + String(sensor1) + " / Sens2> " + String(sensor2) + " \n - InputMessage1 -> " + inputMessage1 + " \n - InputMessage2 -> " +
-                                  inputMessage2 + String(" - ") + String(__FILE__));
-    String assuntoparaemail = "Update regular do " + String(NOME_IRRIGADOR) + " -- estou conectado no " + String(WiFi.localIP());
-    Serial.println(textoparaemail + " WiFi connected - Rede -> " + ip + String(" - ") + String(__FILE__));
-    envioemail(textoparaemail, assuntoparaemail);
+
+    if (wifiReadyForEmail) {
+      String ip = WiFi.localIP().toString();
+      String textoparaemail = String("Sens1> " + String(sensor1) + " / Sens2> " + String(sensor2) + " \n - InputMessage1 -> " + inputMessage1 + " \n - InputMessage2 -> " +
+                                    inputMessage2 + String(" - ") + String(__FILE__));
+      String assuntoparaemail = "Update regular do " + String(NOME_IRRIGADOR) + " -- estou conectado no " + String(WiFi.localIP());
+      Serial.println(textoparaemail + " WiFi connected - Rede -> " + ip + String(" - ") + String(__FILE__));
+      envioemail(textoparaemail, assuntoparaemail);
+    }
+
     previousMillis1 = currentMillis1;
   }
 
   // ENVIO DE EMAIL QUANDO BAIXA UMIDADE
+  if (!flagAlertaBaixaUmidadePronto) {
+    unsigned long currentMillis5 = millis();
+    if (currentMillis5 - previousMillis5 >= intervaloEnviarEmail) {
+      previousMillis5 = currentMillis5;
+      flagAlertaBaixaUmidadePronto = true;
+    }
+  }
+
   float sens1 = limiteCorrigidoMais1 + 150;
   float sens2 = limiteCorrigidoMais2 + 150;
-  if ((sensor1 > sens1 || sensor2 > sens2) && flag7 == 1 && tempoBombaLigada == 8) {
-    flag7 = 0;
+  if ((sensor1 > sens1 || sensor2 > sens2) && flagAlertaBaixaUmidadePronto && tempoBombaLigada == 8) {
+    flagAlertaBaixaUmidadePronto = false;
+    previousMillis5 = millis();
     String textoparaemail = String(" ALERTA DE BAIXA UMIDADE - Sens1> " + String(sensor1) + " / Sens2> " + String(sensor2) + " \n - InputMessage1 -> " +
                                   inputMessage1 + " \n - InputMessage2 -> " + inputMessage2 + String(" - ") + String(__FILE__));
     String assuntoparaemail = "ALERTA DE BAIXA UMIDADE - Mensagem do " + String(NOME_IRRIGADOR) + " IP " + String(WiFi.localIP());
     envioemail(textoparaemail, assuntoparaemail);
-    unsigned long currentMillis5 = millis();
-    if (currentMillis5 - previousMillis5 >= intervaloEnviarEmail) {
-      previousMillis5 = currentMillis5;
-      flag7 = 1;
-    }
   }
+}
+
+bool connectWiFiWithTimeout(unsigned long timeoutMs) {
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  unsigned long startAttemptTime = millis();
+
+  while (WiFi.status() != WL_CONNECTED && (millis() - startAttemptTime) < timeoutMs) {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println();
+
+  return WiFi.status() == WL_CONNECTED;
 }
 
 /* Callback function to get the Email sending status */
