@@ -48,6 +48,8 @@ String assuntoEmail = "Assunto Default";
 
 // OTA CONFIG
 const char* host = "esp32_ota";
+const char* OTA_USERNAME = "admin";
+const char* OTA_PASSWORD = "Xemics17";
 
 
 Preferences preferences;
@@ -171,24 +173,6 @@ const char index_html[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-// Página de login para OTA
-const char* loginIndex = 
- "<html>"
- "<head>"
- "<title>ESP32 OTA Login Page</title>"
- "</head>"
- "<body>"
- "<h1>ESP32 OTA - <<NOME_IRRIGADOR>> -Login Page</h1>"
- "<form name='loginForm' action='/serverIndex' method='POST'>"
- "<label>Username:</label>"
- "<input type='text' name='username'><br>"
- "<label>Password:</label>"
- "<input type='password' name='password'><br>"
- "<input type='submit' value='Login'>"
- "</form>"
- "</body>"
- "</html>";
-
 // Página de atualização de firmware
 const char* serverIndex = 
  "<html>"
@@ -302,20 +286,32 @@ void setup() {
 
   // OTA Routes
   server.on("/ota", HTTP_GET, []() {
+    if (!server.authenticate(OTA_USERNAME, OTA_PASSWORD)) {
+      return server.requestAuthentication();
+    }
     server.sendHeader("Connection", "close");
-    server.send(200, "text/html", loginIndex);
+    server.send(200, "text/html", serverIndex);
   });
 
   server.on("/serverIndex", HTTP_GET, []() {
+    if (!server.authenticate(OTA_USERNAME, OTA_PASSWORD)) {
+      return server.requestAuthentication();
+    }
     server.sendHeader("Connection", "close");
     server.send(200, "text/html", serverIndex);
   });
 
   server.on("/update", HTTP_POST, []() {
+    if (!server.authenticate(OTA_USERNAME, OTA_PASSWORD)) {
+      return server.requestAuthentication();
+    }
     server.sendHeader("Connection", "close");
     server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
     ESP.restart();
   }, []() {
+    if (!server.authenticate(OTA_USERNAME, OTA_PASSWORD)) {
+      return server.requestAuthentication();
+    }
     HTTPUpload& upload = server.upload();
     if (upload.status == UPLOAD_FILE_START) {
       Serial.printf("Update: %s\n", upload.filename.c_str());
