@@ -23,34 +23,25 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include "web_pages.h"
+#include "app_config.h"
+#include "secrets.h"
 
-const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = -10800;
-const int daylightOffset_sec = 0;
-const unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000;
+const char* ntpServer = AppConfig::NTP_SERVER;
+const long gmtOffset_sec = AppConfig::GMT_OFFSET_SEC;
+const int daylightOffset_sec = AppConfig::DAYLIGHT_OFFSET_SEC;
 
-long timerIntervaloBomba = 10000;   // Tamanho do ciclo para ligar e desligar bomba
-#define NOME_IRRIGADOR "IRRIGADOR_VS1"  // Nome do irrigador
-float indiceThreshold = 40;
-long intervaloEnviarEmailTemp = 24;  // Valor em horas
-short qtdCiclosTimer = 12;
-long tempoFlagBombaTravada = 250;
+long timerIntervaloBomba = AppConfig::TIMER_INTERVALO_BOMBA_MS;   // Tamanho do ciclo para ligar e desligar bomba
+float indiceThreshold = AppConfig::INDICE_THRESHOLD;
+long intervaloEnviarEmailTemp = AppConfig::INTERVALO_EMAIL_H;  // Valor em horas
+short qtdCiclosTimer = AppConfig::QTD_CICLOS_TIMER;
+long tempoFlagBombaTravada = AppConfig::TEMPO_FLAG_BOMBA_TRAVADA;
 
-// CONFIGURACAO EMAIL
-#define WIFI_SSID "Boituva_2"
-#define WIFI_PASSWORD "zecalindo2023"
-#define SMTP_HOST "smtp.gmail.com"
-#define SMTP_PORT esp_mail_smtp_port_587
-#define AUTHOR_EMAIL "esp32teste1234@gmail.com"
-#define AUTHOR_PASSWORD "siqh lxfx fqvl xvdt"
-#define RECIPIENT_EMAIL "jstagni@gmail.com"
+// CONFIGURACAO EMAIL (centralizada em include/secrets.h)
 String mensagemEmail = "Mensagem Default";
 String assuntoEmail = "Assunto Default";
 
 // OTA CONFIG
-const char* host = "esp32_ota";
-const char* OTA_USERNAME = "admin";
-const char* OTA_PASSWORD = "Xemics17";
+const char* host = AppConfig::OTA_HOST;
 
 
 Preferences preferences;
@@ -64,12 +55,13 @@ ESP_Mail_Session session;
 // Callback function to get the Email sending status
 void smtpCallback(SMTP_Status status);
 bool connectWiFiWithTimeout(unsigned long timeoutMs);
+void maintainWiFi();
 
-const int output1 = 19;  // GPIO comando rele 1
-const int output2 = 5;   // GPIO comando rele 2
-const int ledPlaca = 2;  // GPIO comando led
-const int humiditySensor1 = 32;
-const int humiditySensor2 = 34;
+const int output1 = AppConfig::OUTPUT1_PIN;  // GPIO comando rele 1
+const int output2 = AppConfig::OUTPUT2_PIN;   // GPIO comando rele 2
+const int ledPlaca = AppConfig::LED_PLACA_PIN;  // GPIO comando led
+const int humiditySensor1 = AppConfig::HUMIDITY_SENSOR1_PIN;
+const int humiditySensor2 = AppConfig::HUMIDITY_SENSOR2_PIN;
 
 // Default Threshold sensor1 Value
 String lastSensor1 = "0";
@@ -95,7 +87,7 @@ bool manualPump2State = false; // Tracks manual state of Pump 2 (true = ON, fals
 bool manualOverride1 = false;  // Indicates if Pump 1 is manually controlled
 bool manualOverride2 = false;  // Indicates if Pump 2 is manually controlled
 
-const int SENSOR_SAMPLE_SIZE = 5;
+const int SENSOR_SAMPLE_SIZE = AppConfig::SENSOR_SAMPLE_SIZE;
 int medidasArray1[SENSOR_SAMPLE_SIZE] = {0};
 int medidasArray2[SENSOR_SAMPLE_SIZE] = {0};
 int sampleIndex = 0;
@@ -116,8 +108,9 @@ long previousMillis2 = 0;
 long previousMillis3 = 0;
 long previousMillis4 = 0;
 long previousMillis5 = 0;
+unsigned long lastWiFiReconnectAttempt = 0;
 
-long interval = 5000;    // tempo entre medidas do sensor
+long interval = AppConfig::INTERVALO_SENSOR_MS;    // tempo entre medidas do sensor
 long tempoB1Ligada = 0;  // tempo da B1 ligada no ciclo de irrigação
 long tempoB2Ligada = 0;  // tempo da B2 ligada no ciclo de irrigação
 
@@ -128,7 +121,7 @@ WebServer server(80);
 // Replaces placeholder with sensor values
 String processor(const String& var) {
   if (var == "NOME_IRRIGADOR") {
-    return String(NOME_IRRIGADOR);
+    return String(AppConfig::NOME_IRRIGADOR);
   } else if (var == "HUMIDITY_1") {
     return lastSensor1;
   } else if (var == "THRESHOLD1") {
@@ -192,10 +185,14 @@ void setup() {
   preferences.end();
 
   // Conectar ao WiFi
-  connectWiFiWithTimeout(WIFI_CONNECT_TIMEOUT_MS);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+
+  connectWiFiWithTimeout(AppConfig::WIFI_CONNECT_TIMEOUT_MS);
   if (WiFi.status() == WL_CONNECTED) {
     String wifiConnectedMsg = F("WiFi connected - Rede -> ");
-    wifiConnectedMsg += WIFI_SSID;
+    wifiConnectedMsg += Secrets::WIFI_SSID;
     Serial.println(wifiConnectedMsg);
     Serial.print("IP -> ");
     Serial.println(WiFi.localIP());
@@ -248,7 +245,7 @@ void setup() {
 
   // OTA Routes
   server.on("/ota", HTTP_GET, []() {
-    if (!server.authenticate(OTA_USERNAME, OTA_PASSWORD)) {
+    if (!server.authenticate(Secrets::OTA_USERNAME, Secrets::OTA_PASSWORD)) {
       return server.requestAuthentication();
     }
     server.sendHeader("Connection", "close");
@@ -256,7 +253,7 @@ void setup() {
   });
 
   server.on("/serverIndex", HTTP_GET, []() {
-    if (!server.authenticate(OTA_USERNAME, OTA_PASSWORD)) {
+    if (!server.authenticate(Secrets::OTA_USERNAME, Secrets::OTA_PASSWORD)) {
       return server.requestAuthentication();
     }
     server.sendHeader("Connection", "close");
@@ -264,14 +261,14 @@ void setup() {
   });
 
   server.on("/update", HTTP_POST, []() {
-    if (!server.authenticate(OTA_USERNAME, OTA_PASSWORD)) {
+    if (!server.authenticate(Secrets::OTA_USERNAME, Secrets::OTA_PASSWORD)) {
       return server.requestAuthentication();
     }
     server.sendHeader("Connection", "close");
     server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
     ESP.restart();
   }, []() {
-    if (!server.authenticate(OTA_USERNAME, OTA_PASSWORD)) {
+    if (!server.authenticate(Secrets::OTA_USERNAME, Secrets::OTA_PASSWORD)) {
       return server.requestAuthentication();
     }
     HTTPUpload& upload = server.upload();
@@ -346,7 +343,7 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     String ip = WiFi.localIP().toString();
     String assuntoparaemail = F("Genius PowerUp! A unidade ");
-    assuntoparaemail += NOME_IRRIGADOR;
+    assuntoparaemail += AppConfig::NOME_IRRIGADOR;
     assuntoparaemail += F(" acabou de ligar. Conectado no ");
     assuntoparaemail += ip;
     assuntoparaemail += ' ';
@@ -358,6 +355,7 @@ void setup() {
 }
 
 void loop() {
+  maintainWiFi();
   server.handleClient();
 
   // TIMER DE INTERVALO DOS CICLOS DA BOMBA
@@ -582,7 +580,7 @@ void loop() {
     bool wifiReadyForEmail = true;
     if (WiFi.status() != WL_CONNECTED) {
       Serial.println("WiFi desconectado. Tentando reconectar com timeout...");
-      if (!connectWiFiWithTimeout(WIFI_CONNECT_TIMEOUT_MS)) {
+      if (!connectWiFiWithTimeout(AppConfig::WIFI_CONNECT_TIMEOUT_MS)) {
         Serial.println("Falha na reconexao WiFi. Email periodico nao enviado.");
         wifiReadyForEmail = false;
       }
@@ -601,7 +599,7 @@ void loop() {
       textoparaemail += F(" - ");
       textoparaemail += __FILE__;
       String assuntoparaemail = F("Update regular do ");
-      assuntoparaemail += NOME_IRRIGADOR;
+      assuntoparaemail += AppConfig::NOME_IRRIGADOR;
       assuntoparaemail += F(" -- estou conectado no ");
       assuntoparaemail += WiFi.localIP().toString();
       String emailLog = textoparaemail;
@@ -641,7 +639,7 @@ void loop() {
     textoparaemail += F(" - ");
     textoparaemail += __FILE__;
     String assuntoparaemail = F("ALERTA DE BAIXA UMIDADE - Mensagem do ");
-    assuntoparaemail += NOME_IRRIGADOR;
+    assuntoparaemail += AppConfig::NOME_IRRIGADOR;
     assuntoparaemail += F(" IP ");
     assuntoparaemail += WiFi.localIP().toString();
     envioemail(textoparaemail, assuntoparaemail);
@@ -649,7 +647,7 @@ void loop() {
 }
 
 bool connectWiFiWithTimeout(unsigned long timeoutMs) {
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(Secrets::WIFI_SSID, Secrets::WIFI_PASSWORD);
   unsigned long startAttemptTime = millis();
 
   while (WiFi.status() != WL_CONNECTED && (millis() - startAttemptTime) < timeoutMs) {
@@ -659,6 +657,22 @@ bool connectWiFiWithTimeout(unsigned long timeoutMs) {
   Serial.println();
 
   return WiFi.status() == WL_CONNECTED;
+}
+
+void maintainWiFi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    return;
+  }
+
+  unsigned long now = millis();
+  if (now - lastWiFiReconnectAttempt < AppConfig::WIFI_RECONNECT_INTERVAL_MS) {
+    return;
+  }
+
+  lastWiFiReconnectAttempt = now;
+  Serial.println("WiFi desconectado. Tentando reconectar...");
+  WiFi.disconnect(false);
+  WiFi.begin(Secrets::WIFI_SSID, Secrets::WIFI_PASSWORD);
 }
 
 bool tryParseThreshold(const String& rawValue, float& parsedValue) {
@@ -709,20 +723,20 @@ void envioemail(String htmlMsg, String assuntoEmail) {
   smtp.callback(smtpCallback);
 
   Session_Config config;
-  config.server.host_name = SMTP_HOST;
-  config.server.port = SMTP_PORT;
-  config.login.email = AUTHOR_EMAIL;
-  config.login.password = AUTHOR_PASSWORD;
+  config.server.host_name = Secrets::SMTP_HOST;
+  config.server.port = AppConfig::SMTP_PORT;
+  config.login.email = Secrets::AUTHOR_EMAIL;
+  config.login.password = Secrets::AUTHOR_PASSWORD;
   config.login.user_domain = F("127.0.0.1");
   config.time.ntp_server = F("pool.ntp.org,time.nist.gov");
   config.time.gmt_offset = 3;
   config.time.day_light_offset = 0;
 
   SMTP_Message message;
-  message.sender.name = NOME_IRRIGADOR;
-  message.sender.email = AUTHOR_EMAIL;
+  message.sender.name = AppConfig::NOME_IRRIGADOR;
+  message.sender.email = Secrets::AUTHOR_EMAIL;
   message.subject = String(assuntoEmail);
-  message.addRecipient(F("Someone"), RECIPIENT_EMAIL);
+  message.addRecipient(F("Someone"), Secrets::RECIPIENT_EMAIL);
   message.text.flowed = true;
   message.html.content = htmlMsg.c_str();
   message.text.charSet = F("us-ascii");
