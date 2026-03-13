@@ -145,6 +145,23 @@ String processor(const String& var) {
   return String();
 }
 
+String renderHomePage() {
+  String html = String(INDEX_HTML);
+  html.replace("%NOME_IRRIGADOR%", processor("NOME_IRRIGADOR"));
+  html.replace("%HUMIDITY_1%", processor("HUMIDITY_1"));
+  html.replace("%THRESHOLD1%", processor("THRESHOLD1"));
+  html.replace("%HUMIDITY_2%", processor("HUMIDITY_2"));
+  html.replace("%THRESHOLD2%", processor("THRESHOLD2"));
+  html.replace("%PUMP1_INDICATOR%", processor("PUMP1_INDICATOR"));
+  html.replace("%PUMP2_INDICATOR%", processor("PUMP2_INDICATOR"));
+  return html;
+}
+
+void redirectToHome() {
+  server.sendHeader("Location", "/", true);
+  server.send(303, "text/plain", "");
+}
+
 const char* PARAM_INPUT_1_TH = "threshold_input1";
 const char* PARAM_INPUT_2_TH = "threshold_input2";
 
@@ -200,15 +217,7 @@ void setup() {
 
   // Configurar rotas do servidor
   server.on("/", HTTP_GET, []() {
-    String html = String(INDEX_HTML);
-    html.replace("%NOME_IRRIGADOR%", processor("NOME_IRRIGADOR"));
-    html.replace("%HUMIDITY_1%", processor("HUMIDITY_1"));
-    html.replace("%THRESHOLD1%", processor("THRESHOLD1"));
-    html.replace("%HUMIDITY_2%", processor("HUMIDITY_2"));
-    html.replace("%THRESHOLD2%", processor("THRESHOLD2"));
-    html.replace("%PUMP1_INDICATOR%", processor("PUMP1_INDICATOR"));
-    html.replace("%PUMP2_INDICATOR%", processor("PUMP2_INDICATOR"));
-    server.send(200, "text/html", html);
+    server.send(200, "text/html", renderHomePage());
   });
 
   server.on("/get", HTTP_GET, []() {
@@ -234,8 +243,7 @@ void setup() {
     if (updated) {
       saveThresholds();
     }
-
-    server.send(200, "text/html", "HTTP GET request sent to your ESP.<br><a href='/'>Return to Home Page</a>");
+    redirectToHome();
   });
 
   // OTA Routes
@@ -293,7 +301,7 @@ void setup() {
    //String message = "Pump 1 turned ON manually.";
    // String subject = "Manual Control: Pump 1 ON - " + String(NOME_IRRIGADOR);
    // envioemail(message, subject);
-    server.send(200, "text/html", "Pump 1 turned ON.<br><a href='/'>Return to Home Page</a>");
+    redirectToHome();
   });
 
   server.on("/pump1_off", HTTP_GET, []() {
@@ -303,7 +311,7 @@ void setup() {
   //  String message = "Pump 1 turned OFF manually.";
   //  String subject = "Manual Control: Pump 1 OFF - " + String(NOME_IRRIGADOR);
   //  envioemail(message, subject);
-    server.send(200, "text/html", "Pump 1 turned OFF.<br><a href='/'>Return to Home Page</a>");
+    redirectToHome();
   });
 
   server.on("/pump2_on", HTTP_GET, []() {
@@ -313,7 +321,7 @@ void setup() {
     //String message = "Pump 2 turned ON manually.";
     //String subject = "Manual Control: Pump 2 ON - " + String(NOME_IRRIGADOR);
     //envioemail(message, subject);
-    server.send(200, "text/html", "Pump 2 turned ON.<br><a href='/'>Return to Home Page</a>");
+    redirectToHome();
   });
 
   server.on("/pump2_off", HTTP_GET, []() {
@@ -323,7 +331,7 @@ void setup() {
    // String message = "Pump 2 turned OFF manually.";
    // String subject = "Manual Control: Pump 2 OFF - " + String(NOME_IRRIGADOR);
    // envioemail(message, subject);
-    server.send(200, "text/html", "Pump 2 turned OFF.<br><a href='/'>Return to Home Page</a>");
+    redirectToHome();
   });
 
   server.onNotFound([]() {
@@ -334,12 +342,7 @@ void setup() {
   Serial.println("Servidor iniciado");
 
   // Enviar e-mail no power-up
-  String html = String(INDEX_HTML);
-  html.replace("%NOME_IRRIGADOR%", processor("NOME_IRRIGADOR"));
-  html.replace("%HUMIDITY_1%", processor("HUMIDITY_1"));
-  html.replace("%THRESHOLD1%", processor("THRESHOLD1"));
-  html.replace("%HUMIDITY_2%", processor("HUMIDITY_2"));
-  html.replace("%THRESHOLD2%", processor("THRESHOLD2"));
+  String html = renderHomePage();
   if (WiFi.status() == WL_CONNECTED) {
     String ip = WiFi.localIP().toString();
     String assuntoparaemail = F("Genius PowerUp! A unidade ");

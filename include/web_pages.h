@@ -99,30 +99,40 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     .button-on { background: #4caf50; }
     .button-off { background: #f44336; }
     .indicator { 
-      width: 20px; 
-      height: 20px; 
+      width: 34px; 
+      height: 34px; 
       border-radius: 50%; 
       display: inline-block; 
       margin: 0 15px; 
-      border: 3px solid #ffffff; 
-      box-shadow: 0 0 10px rgba(0,0,0,0.3); 
+      border: 4px solid #ffffff; 
+      box-shadow: 0 0 0 4px rgba(0,0,0,0.06), 0 10px 24px rgba(0,0,0,0.18); 
       position: relative; 
+      transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease; 
     }
     .indicator::after { 
       content: "Inativa"; 
-      font-size: 0.7em; 
+      font-size: 0.78em; 
+      font-weight: 700; 
       position: absolute; 
-      top: 25px; 
+      top: 42px; 
       left: 50%; 
       transform: translateX(-50%); 
       color: #f44336; 
+      white-space: nowrap;
     }
     .pump-on::after { 
       content: "Ativa"; 
-      color: #4caf50; 
+      color: #16a34a; 
     }
-    .pump-on { background-color: #4caf50; }
-    .pump-off { background-color: #f44336; }
+    .pump-on { 
+      background-color: #22c55e; 
+      box-shadow: 0 0 0 4px rgba(34,197,94,0.18), 0 0 22px rgba(34,197,94,0.45); 
+      transform: scale(1.06);
+    }
+    .pump-off { 
+      background-color: #ef4444; 
+      box-shadow: 0 0 0 4px rgba(239,68,68,0.15), 0 0 18px rgba(239,68,68,0.28); 
+    }
     input[type="number"] { 
       padding: 12px; 
       margin: 10px; 
