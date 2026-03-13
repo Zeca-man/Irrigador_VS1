@@ -244,7 +244,9 @@ void setup() {
   // Conectar ao WiFi
   connectWiFiWithTimeout(WIFI_CONNECT_TIMEOUT_MS);
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("WiFi connected - Rede -> " + String(WIFI_SSID));
+    String wifiConnectedMsg = F("WiFi connected - Rede -> ");
+    wifiConnectedMsg += WIFI_SSID;
+    Serial.println(wifiConnectedMsg);
     Serial.print("IP -> ");
     Serial.println(WiFi.localIP());
   } else {
@@ -407,7 +409,12 @@ void setup() {
   html.replace("%THRESHOLD2%", processor("THRESHOLD2"));
   if (WiFi.status() == WL_CONNECTED) {
     String ip = WiFi.localIP().toString();
-    String assuntoparaemail = "Genius PowerUp! A unidade " + String(NOME_IRRIGADOR) + " acabou de ligar. Conectado no " + String(ip) + " " + String(__FILE__);
+    String assuntoparaemail = F("Genius PowerUp! A unidade ");
+    assuntoparaemail += NOME_IRRIGADOR;
+    assuntoparaemail += F(" acabou de ligar. Conectado no ");
+    assuntoparaemail += ip;
+    assuntoparaemail += ' ';
+    assuntoparaemail += __FILE__;
     envioemail(html, assuntoparaemail);
   } else {
     Serial.println("Email de power-up nao enviado (sem WiFi).");
@@ -421,7 +428,10 @@ void loop() {
   unsigned long currentMillis2 = millis();
   if (currentMillis2 - previousMillis2 >= timerIntervaloBomba) {
     previousMillis2 = currentMillis2;
-    Serial.println(String(timerIntervaloBomba / 1000) + " segundos - flag -> " + String(tempoBombaLigada));
+    String timerMsg = String(timerIntervaloBomba / 1000);
+    timerMsg += F(" segundos - flag -> ");
+    timerMsg += tempoBombaLigada;
+    Serial.println(timerMsg);
     tempoBombaLigada = tempoBombaLigada + 1;
     if (tempoBombaLigada == qtdCiclosTimer) {
       tempoBombaLigada = 0;
@@ -457,9 +467,21 @@ void loop() {
     limiteCorrigidoMais2 = float(inputMessage2.toFloat() + indiceThreshold);
     limiteCorrigidoMenos2 = float(inputMessage2.toFloat() - indiceThreshold);
 
-    Serial.println("S1-> " + String(sensor1) + " / S2-> " + String(sensor2) + " Inputmsg " + inputMessage1 + "/" + inputMessage2 + " / BXHum-> " +
-                   String(flagBxHumidade1) + " / tmp int ciclo bomba " +
-                   String(timerIntervaloBomba / 1000) + " seg - flag da bomba-> " + String(tempoBombaLigada));
+    String sensorLog = F("S1-> ");
+    sensorLog += sensor1;
+    sensorLog += F(" / S2-> ");
+    sensorLog += sensor2;
+    sensorLog += F(" Inputmsg ");
+    sensorLog += inputMessage1;
+    sensorLog += '/';
+    sensorLog += inputMessage2;
+    sensorLog += F(" / BXHum-> ");
+    sensorLog += String(flagBxHumidade1);
+    sensorLog += F(" / tmp int ciclo bomba ");
+    sensorLog += String(timerIntervaloBomba / 1000);
+    sensorLog += F(" seg - flag da bomba-> ");
+    sensorLog += tempoBombaLigada;
+    Serial.println(sensorLog);
   }
 
   // DEFINIR FLAG DE BAIXA UMIDADE
@@ -493,7 +515,9 @@ void loop() {
           manualOverride1 = false;
           manualPump1State = false;
           digitalWrite(output1, HIGH);
-          String assuntoparaemail = "Bomba 1 foi travada. Funcionou por " + String(tempoB1Ligada) + " segundos";
+          String assuntoparaemail = F("Bomba 1 foi travada. Funcionou por ");
+          assuntoparaemail += tempoB1Ligada;
+          assuntoparaemail += F(" segundos");
           String textoparaemail = assuntoparaemail;
           envioemail(textoparaemail, assuntoparaemail);
         }
@@ -507,7 +531,9 @@ void loop() {
       tempoB1Ligada = tempoB1Ligada + 1;
       if (tempoB1Ligada > tempoFlagBombaTravada) {
         flagBomba1Travada = 1;
-        String assuntoparaemail = "Bomba 1 foi travada. Funcionou por " + String(tempoB1Ligada) + " segundos";
+        String assuntoparaemail = F("Bomba 1 foi travada. Funcionou por ");
+        assuntoparaemail += tempoB1Ligada;
+        assuntoparaemail += F(" segundos");
         String textoparaemail = assuntoparaemail;
         envioemail(textoparaemail, assuntoparaemail);
       }
@@ -529,7 +555,9 @@ void loop() {
           manualOverride2 = false;
           manualPump2State = false;
           digitalWrite(output2, HIGH);
-          String assuntoparaemail = "Bomba 2 foi travada. Funcionou por " + String(tempoB2Ligada) + " segundos";
+          String assuntoparaemail = F("Bomba 2 foi travada. Funcionou por ");
+          assuntoparaemail += tempoB2Ligada;
+          assuntoparaemail += F(" segundos");
           String textoparaemail = assuntoparaemail;
           envioemail(textoparaemail, assuntoparaemail);
         }
@@ -543,7 +571,9 @@ void loop() {
       tempoB2Ligada = tempoB2Ligada + 1;
       if (tempoB2Ligada > tempoFlagBombaTravada) {
         flagBomba2Travada = 1;
-        String assuntoparaemail = "Bomba 2 foi travada. Funcionou por " + String(tempoB2Ligada) + " segundos";
+        String assuntoparaemail = F("Bomba 2 foi travada. Funcionou por ");
+        assuntoparaemail += tempoB2Ligada;
+        assuntoparaemail += F(" segundos");
         String textoparaemail = assuntoparaemail;
         envioemail(textoparaemail, assuntoparaemail);
       }
@@ -554,15 +584,27 @@ void loop() {
 
   // ENVIO DE EMAIL QUANDO DA MUDANÇA DE ESTADO SENSOR 1
   if (flagBxHumidade1 && flagEmail1 == 0) {
-    String textoparaemail = "Bomba ligada - Sensor1 -> " + String(sensor1) + " - Sensor2 -> " + String(sensor2) + " - dado inserido ->" + String(float(inputMessage1.toFloat()));
-    String assuntoparaemail = "Ligando a Bomba 1 - Mensagem do irrigador";
+    String textoparaemail = F("Bomba ligada - Sensor1 -> ");
+    textoparaemail += sensor1;
+    textoparaemail += F(" - Sensor2 -> ");
+    textoparaemail += sensor2;
+    textoparaemail += F(" - dado inserido ->");
+    textoparaemail += String(float(inputMessage1.toFloat()));
+    String assuntoparaemail = F("Ligando a Bomba 1 - Mensagem do irrigador");
     Serial.println(textoparaemail);
     flagEmail1 = 1;
     envioemail(textoparaemail, assuntoparaemail);
   }
   if (!flagBxHumidade1 && flagEmail1 == 1) {
-    String textoparaemail = "Bomba 1 funcionou por " + String(tempoB1Ligada) + " segundos. Dados do sensores - Sensor1 -> " + String(sensor1) + " - Sensor2 -> " + String(sensor2);
-    String assuntoparaemail = "Resumo da ativação da bomba 1. Funcionou por " + String(tempoB1Ligada) + " segundos. Status Bomba 1 Desligada";
+    String textoparaemail = F("Bomba 1 funcionou por ");
+    textoparaemail += tempoB1Ligada;
+    textoparaemail += F(" segundos. Dados do sensores - Sensor1 -> ");
+    textoparaemail += sensor1;
+    textoparaemail += F(" - Sensor2 -> ");
+    textoparaemail += sensor2;
+    String assuntoparaemail = F("Resumo da ativacao da bomba 1. Funcionou por ");
+    assuntoparaemail += tempoB1Ligada;
+    assuntoparaemail += F(" segundos. Status Bomba 1 Desligada");
     Serial.println(textoparaemail);
     tempoB1Ligada = 0;
     flagEmail1 = 0;
@@ -571,15 +613,27 @@ void loop() {
 
   // ENVIO DE EMAIL QUANDO DA MUDANÇA DE ESTADO SENSOR 2
   if (flagBxHumidade2 && flagEmail2 == 0) {
-    String textoparaemail = "Bomba ligada - Sensor1 -> " + String(sensor1) + " - Sensor2 -> " + String(sensor2) + " - dado inserido ->" + String(float(inputMessage2.toFloat()));
-    String assuntoparaemail = "Ligando a Bomba 2 - Mensagem do irrigador";
+    String textoparaemail = F("Bomba ligada - Sensor1 -> ");
+    textoparaemail += sensor1;
+    textoparaemail += F(" - Sensor2 -> ");
+    textoparaemail += sensor2;
+    textoparaemail += F(" - dado inserido ->");
+    textoparaemail += String(float(inputMessage2.toFloat()));
+    String assuntoparaemail = F("Ligando a Bomba 2 - Mensagem do irrigador");
     Serial.println(textoparaemail);
     flagEmail2 = 1;
     envioemail(textoparaemail, assuntoparaemail);
   }
   if (!flagBxHumidade2 && flagEmail2 == 1) {
-    String textoparaemail = "Bomba 2 funcionou por " + String(tempoB2Ligada) + " segundos. Dados do sensores - Sensor1 -> " + String(sensor1) + " - Sensor2 -> " + String(sensor2);
-    String assuntoparaemail = "Resumo da ativação da bomba 2. Funcionou por " + String(tempoB2Ligada) + " segundos. Status Bomba 2 Desligada";
+    String textoparaemail = F("Bomba 2 funcionou por ");
+    textoparaemail += tempoB2Ligada;
+    textoparaemail += F(" segundos. Dados do sensores - Sensor1 -> ");
+    textoparaemail += sensor1;
+    textoparaemail += F(" - Sensor2 -> ");
+    textoparaemail += sensor2;
+    String assuntoparaemail = F("Resumo da ativacao da bomba 2. Funcionou por ");
+    assuntoparaemail += tempoB2Ligada;
+    assuntoparaemail += F(" segundos. Status Bomba 2 Desligada");
     Serial.println(textoparaemail);
     tempoB2Ligada = 0;
     flagEmail2 = 0;
@@ -600,10 +654,26 @@ void loop() {
 
     if (wifiReadyForEmail) {
       String ip = WiFi.localIP().toString();
-      String textoparaemail = "Sens1> " + String(sensor1) + " / Sens2> " + String(sensor2) + " \n - InputMessage1 -> " + inputMessage1 + " \n - InputMessage2 -> " +
-                              inputMessage2 + " - " + String(__FILE__);
-      String assuntoparaemail = "Update regular do " + String(NOME_IRRIGADOR) + " -- estou conectado no " + String(WiFi.localIP());
-      Serial.println(textoparaemail + " WiFi connected - Rede -> " + ip + String(" - ") + String(__FILE__));
+      String textoparaemail = F("Sens1> ");
+      textoparaemail += sensor1;
+      textoparaemail += F(" / Sens2> ");
+      textoparaemail += sensor2;
+      textoparaemail += F(" \n - InputMessage1 -> ");
+      textoparaemail += inputMessage1;
+      textoparaemail += F(" \n - InputMessage2 -> ");
+      textoparaemail += inputMessage2;
+      textoparaemail += F(" - ");
+      textoparaemail += __FILE__;
+      String assuntoparaemail = F("Update regular do ");
+      assuntoparaemail += NOME_IRRIGADOR;
+      assuntoparaemail += F(" -- estou conectado no ");
+      assuntoparaemail += WiFi.localIP().toString();
+      String emailLog = textoparaemail;
+      emailLog += F(" WiFi connected - Rede -> ");
+      emailLog += ip;
+      emailLog += F(" - ");
+      emailLog += __FILE__;
+      Serial.println(emailLog);
       envioemail(textoparaemail, assuntoparaemail);
     }
 
@@ -624,9 +694,20 @@ void loop() {
   if ((sensor1 > sens1 || sensor2 > sens2) && flagAlertaBaixaUmidadePronto && tempoBombaLigada == 8) {
     flagAlertaBaixaUmidadePronto = false;
     previousMillis5 = millis();
-    String textoparaemail = " ALERTA DE BAIXA UMIDADE - Sens1> " + String(sensor1) + " / Sens2> " + String(sensor2) + " \n - InputMessage1 -> " +
-                            inputMessage1 + " \n - InputMessage2 -> " + inputMessage2 + " - " + String(__FILE__);
-    String assuntoparaemail = "ALERTA DE BAIXA UMIDADE - Mensagem do " + String(NOME_IRRIGADOR) + " IP " + String(WiFi.localIP());
+    String textoparaemail = F(" ALERTA DE BAIXA UMIDADE - Sens1> ");
+    textoparaemail += sensor1;
+    textoparaemail += F(" / Sens2> ");
+    textoparaemail += sensor2;
+    textoparaemail += F(" \n - InputMessage1 -> ");
+    textoparaemail += inputMessage1;
+    textoparaemail += F(" \n - InputMessage2 -> ");
+    textoparaemail += inputMessage2;
+    textoparaemail += F(" - ");
+    textoparaemail += __FILE__;
+    String assuntoparaemail = F("ALERTA DE BAIXA UMIDADE - Mensagem do ");
+    assuntoparaemail += NOME_IRRIGADOR;
+    assuntoparaemail += F(" IP ");
+    assuntoparaemail += WiFi.localIP().toString();
     envioemail(textoparaemail, assuntoparaemail);
   }
 }
