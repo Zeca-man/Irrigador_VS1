@@ -22,6 +22,7 @@
 #include <Update.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
+#include "web_pages.h"
 
 const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -10800;
@@ -120,74 +121,6 @@ long interval = 5000;    // tempo entre medidas do sensor
 long tempoB1Ligada = 0;  // tempo da B1 ligada no ciclo de irrigação
 long tempoB2Ligada = 0;  // tempo da B2 ligada no ciclo de irrigação
 
-// HTML do controle de humidade - pagina principal
-const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE HTML>
-<html>
-<head>
-  <title>%NOME_IRRIGADOR%</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body { font-family: Arial; text-align: center; }
-    .button { padding: 10px 20px; margin: 5px; text-decoration: none; color: white; border-radius: 5px; }
-    .button-on { background-color: #4CAF50; }
-    .button-off { background-color: #f44336; }
-    .indicator { display: inline-block; width: 15px; height: 15px; border-radius: 50%; margin-left: 10px; }
-    .pump-on { background-color: #4CAF50; }
-    .pump-off { background-color: #f44336; }
-  </style>
-</head>
-<body>
-  <h2>%NOME_IRRIGADOR%</h2>
-  
-  <p>Sensor 1 - %HUMIDITY_1%</p>
-  <p>
-    Sensor 1 
-    <input type="number" name="threshold_input1" value="%THRESHOLD1%">
-    <input type="submit" value="Set Threshold" onclick="location.href='/get?threshold_input1=' + document.getElementsByName('threshold_input1')[0].value">
-  </p>
-
-  <h3>Pump 1 Control</h3>
-  <p>
-    <a href="/pump1_on" class="button button-on">ON</a>
-    <span class="indicator %PUMP1_INDICATOR%"></span>
-    <a href="/pump1_off" class="button button-off">OFF</a>
-    <span class="indicator %PUMP1_INDICATOR%"></span>
-  </p>
-
-  <p>Sensor 2 - %HUMIDITY_2%</p>
-  <p>
-    Sensor 2 
-    <input type="number" name="threshold_input2" value="%THRESHOLD2%">
-    <input type="submit" value="Set Threshold" onclick="location.href='/get?threshold_input2=' + document.getElementsByName('threshold_input2')[0].value">
-  </p>
-
-  <h3>Pump 2 Control</h3>
-  <p>
-    <a href="/pump2_on" class="button button-on">ON</a>
-    <span class="indicator %PUMP2_INDICATOR%"></span>
-    <a href="/pump2_off" class="button button-off">OFF</a>
-    <span class="indicator %PUMP2_INDICATOR%"></span>
-  </p>
-</body>
-</html>
-)rawliteral";
-
-// Página de atualização de firmware
-const char* serverIndex = 
- "<html>"
- "<head>"
- "<title>ESP32 OTA Update</title>"
- "</head>"
- "<body>"
- "<h1>ESP32 OTA Update</h1>"
- "<form method='POST' action='/update' enctype='multipart/form-data'>"
- "<input type='file' name='update'>"
- "<input type='submit' value='Update'>"
- "</form>"
- "<div id='prg'>progress: 0%</div>"
- "</body>"
- "</html>";
 
 // WebServer instance
 WebServer server(80);
@@ -267,7 +200,7 @@ void setup() {
 
   // Configurar rotas do servidor
   server.on("/", HTTP_GET, []() {
-    String html = String(index_html);
+    String html = String(INDEX_HTML);
     html.replace("%NOME_IRRIGADOR%", processor("NOME_IRRIGADOR"));
     html.replace("%HUMIDITY_1%", processor("HUMIDITY_1"));
     html.replace("%THRESHOLD1%", processor("THRESHOLD1"));
@@ -311,7 +244,7 @@ void setup() {
       return server.requestAuthentication();
     }
     server.sendHeader("Connection", "close");
-    server.send(200, "text/html", serverIndex);
+    server.send(200, "text/html", OTA_SERVER_INDEX);
   });
 
   server.on("/serverIndex", HTTP_GET, []() {
@@ -319,7 +252,7 @@ void setup() {
       return server.requestAuthentication();
     }
     server.sendHeader("Connection", "close");
-    server.send(200, "text/html", serverIndex);
+    server.send(200, "text/html", OTA_SERVER_INDEX);
   });
 
   server.on("/update", HTTP_POST, []() {
@@ -401,7 +334,7 @@ void setup() {
   Serial.println("Servidor iniciado");
 
   // Enviar e-mail no power-up
-  String html = String(index_html);
+  String html = String(INDEX_HTML);
   html.replace("%NOME_IRRIGADOR%", processor("NOME_IRRIGADOR"));
   html.replace("%HUMIDITY_1%", processor("HUMIDITY_1"));
   html.replace("%THRESHOLD1%", processor("THRESHOLD1"));

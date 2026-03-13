@@ -1,0 +1,181 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <title>Irrigador VS1</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: 'Open Sans', sans-serif;
+      background: #eceff1;
+      color: #37474f;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h2 {
+      color: #263238;
+      margin-bottom: 40px;
+      font-weight: 300;
+      text-align: center;
+    }
+    h4 {
+      text-align: center;
+      margin-top: 20px;
+      color: #546e7a;
+      font-weight: 500;
+    }
+    .section {
+      background: #ffffff;
+      border-radius: 15px;
+      padding: 30px;
+      margin: 20px 0;
+      max-width: 700px;
+      width: 100%;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+      border-top: 5px solid #2196f3;
+    }
+    .section:nth-child(2) {
+      border-top-color: #4caf50;
+    }
+    .irrigator-title {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #2196f3;
+      margin-bottom: 25px;
+      text-align: center;
+      position: relative;
+    }
+    .irrigator-title::after {
+      content: '🌿';
+      position: absolute;
+      right: 10px;
+      top: 0;
+    }
+    .section:nth-child(2) .irrigator-title {
+      color: #4caf50;
+    }
+    .section:nth-child(2) .irrigator-title::after {
+      content: '💧';
+    }
+    .sensor-display {
+      background: #f5f5f5;
+      padding: 20px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .sensor-display strong {
+      font-size: 1.2em;
+      color: #546e7a;
+    }
+    .button-group {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-top: 20px;
+    }
+    .button {
+      padding: 15px 30px;
+      margin: 0 10px;
+      text-decoration: none;
+      color: white;
+      border-radius: 30px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      position: relative;
+    }
+    .button:hover {
+      transform: scale(1.05);
+    }
+    .button-on { background: #4caf50; }
+    .button-off { background: #f44336; }
+    .indicator {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: inline-block;
+      margin: 0 15px;
+      border: 3px solid #ffffff;
+      box-shadow: 0 0 10px rgba(0,0,0,0.3);
+      position: relative;
+    }
+    .indicator::after {
+      content: "Inativa";
+      font-size: 0.7em;
+      position: absolute;
+      top: 25px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #f44336;
+    }
+    .pump-on::after {
+      content: "Ativa";
+      color: #4caf50;
+    }
+    .pump-on { background-color: #4caf50; }
+    .pump-off { background-color: #f44336; }
+    input[type="number"] {
+      padding: 12px;
+      margin: 10px;
+      border: 2px solid #90a4ae;
+      border-radius: 8px;
+      font-size: 1em;
+      width: 140px;
+      text-align: center;
+    }
+    input[type="submit"] {
+      padding: 12px 24px;
+      background: #607d8b;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.3s ease;
+    }
+    input[type="submit"]:hover {
+      background: #546e7a;
+    }
+  </style>
+</head>
+<body>
+  <h2>Irrigador VS1</h2>
+  <div class="section">
+    <div class="irrigator-title">Irrigador 1</div>
+    <div class="sensor-display">
+      <strong>Sensor 1: 45%</strong>
+    </div>
+    <p style="text-align: center;">
+      <input type="number" name="threshold_input1" value="30" placeholder="Definir limite">
+      <input type="submit" value="Aplicar" onclick="alert('Limite definido para 30%')">
+    </p>
+    <h4>Controle da Bomba 1</h4>
+    <div class="button-group">
+      <a href="#" class="button button-on" onclick="alert('Bomba 1 ligada')">LIGAR</a>
+      <span class="indicator pump-off"></span>
+      <a href="#" class="button button-off" onclick="alert('Bomba 1 desligada')">DESLIGAR</a>
+    </div>
+  </div>
+  <div class="section">
+    <div class="irrigator-title">Irrigador 2</div>
+    <div class="sensor-display">
+      <strong>Sensor 2: 62%</strong>
+    </div>
+    <p style="text-align: center;">
+      <input type="number" name="threshold_input2" value="40" placeholder="Definir limite">
+      <input type="submit" value="Aplicar" onclick="alert('Limite definido para 40%')">
+    </p>
+    <h4>Controle da Bomba 2</h4>
+    <div class="button-group">
+      <a href="#" class="button button-on" onclick="alert('Bomba 2 ligada')">LIGAR</a>
+      <span class="indicator pump-on"></span>
+      <a href="#" class="button button-off" onclick="alert('Bomba 2 desligada')">DESLIGAR</a>
+    </div>
+  </div>
+</body>
+</html>
