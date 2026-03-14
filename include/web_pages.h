@@ -8,152 +8,118 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <title>%NOME_IRRIGADOR%</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { 
-      font-family: 'Open Sans', sans-serif; 
-      background: #eceff1; 
-      color: #37474f; 
-      margin: 0; 
-      padding: 20px; 
-      display: flex; 
-      flex-direction: column; 
-      align-items: center; 
+    body {
+      font-family: 'Open Sans', sans-serif;
+      background:
+        repeating-linear-gradient(135deg, rgba(255,255,255,0.6) 0, rgba(255,255,255,0.6) 8px, rgba(236,239,241,0.9) 8px, rgba(236,239,241,0.9) 16px),
+        repeating-linear-gradient(45deg, rgba(255,255,255,0.35) 0, rgba(255,255,255,0.35) 6px, rgba(230,234,238,0.9) 6px, rgba(230,234,238,0.9) 12px);
+      color: #37474f;
+      margin: 0;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      font-size: 13.5px;
     }
-    h2 { 
-      color: #263238; 
-      margin-bottom: 40px; 
-      font-weight: 300; 
-      text-align: center; 
+    h2 {
+      margin: 6px 0 12px;
+      font-size: 1.15em;
+      font-weight: 300;
+      text-align: center;
+      color: #263238;
     }
-    h4 { 
-      text-align: center; 
-      margin-top: 20px; 
-      color: #546e7a; 
-      font-weight: 500; 
+    h4 {
+      margin: 6px 0 4px;
+      font-size: 0.9em;
+      text-align: center;
+      color: #546e7a;
+      font-weight: 500;
     }
-    .section { 
-      background: #ffffff; 
-      border-radius: 15px; 
-      padding: 30px; 
-      margin: 20px 0; 
-      max-width: 700px; 
-      width: 100%; 
-      box-shadow: 0 10px 30px rgba(0,0,0,0.1); 
-      border-top: 5px solid #2196f3; 
+    .section {
+      background: rgba(255,255,255,0.96);
+      border-radius: 10px;
+      padding: 12px;
+      margin: 8px 0;
+      max-width: 520px;
+      width: 100%;
+      box-shadow: 0 5px 14px rgba(0,0,0,0.08);
+      border-top: 4px solid #2196f3;
     }
-    .section:nth-child(2) { 
-      border-top-color: #4caf50; 
+    .section:nth-child(2) { border-top-color: #4caf50; }
+    .irrigator-title {
+      font-size: 1.1em;
+      font-weight: 700;
+      margin-bottom: 6px;
+      text-align: center;
+      color: #2196f3;
     }
-    .irrigator-title { 
-      font-size: 1.8em; 
-      font-weight: bold; 
-      color: #2196f3; 
-      margin-bottom: 25px; 
-      text-align: center; 
-      position: relative; 
+    .section:nth-child(2) .irrigator-title { color: #4caf50; }
+    .sensor-display {
+      background: #f5f5f5;
+      padding: 8px;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      text-align: center;
     }
-    .irrigator-title::after { 
-      content: '🌿'; 
-      position: absolute; 
-      right: 10px; 
-      top: 0; 
+    .sensor-display strong { font-size: 0.95em; }
+    .button-group {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
     }
-    .section:nth-child(2) .irrigator-title { 
-      color: #4caf50; 
-    }
-    .section:nth-child(2) .irrigator-title::after { 
-      content: '💧'; 
-    }
-    .sensor-display { 
-      background: #f5f5f5; 
-      padding: 20px; 
-      border-radius: 10px; 
-      margin-bottom: 20px; 
-      text-align: center; 
-    }
-    .sensor-display strong { 
-      font-size: 1.2em; 
-      color: #546e7a; 
-    }
-    .button-group { 
-      display: flex; 
-      justify-content: center; 
-      align-items: center; 
-      margin-top: 20px; 
-    }
-    .button { 
-      padding: 15px 30px; 
-      margin: 0 10px; 
-      text-decoration: none; 
-      color: white; 
-      border-radius: 30px; 
-      font-weight: 600; 
-      text-transform: uppercase; 
-      letter-spacing: 1px; 
-      transition: all 0.3s ease; 
-      box-shadow: 0 4px 15px rgba(0,0,0,0.2); 
-      position: relative; 
-    }
-    .button:hover { 
-      transform: scale(1.05); 
+    .button {
+      padding: 7px 12px;
+      border-radius: 18px;
+      font-size: 0.8em;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #fff;
+      text-decoration: none;
     }
     .button-on { background: #4caf50; }
     .button-off { background: #f44336; }
-    .indicator { 
-      width: 34px; 
-      height: 34px; 
-      border-radius: 50%; 
-      display: inline-block; 
-      margin: 0 15px; 
-      border: 4px solid #ffffff; 
-      box-shadow: 0 0 0 4px rgba(0,0,0,0.06), 0 10px 24px rgba(0,0,0,0.18); 
-      position: relative; 
-      transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease; 
+    .indicator {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      margin: 0 4px;
+      border: 2px solid #fff;
+      position: relative;
     }
-    .indicator::after { 
-      content: "Inativa"; 
-      font-size: 0.78em; 
-      font-weight: 700; 
-      position: absolute; 
-      top: 42px; 
-      left: 50%; 
-      transform: translateX(-50%); 
-      color: #f44336; 
-      white-space: nowrap;
+    .indicator::after {
+      content: "Inativa";
+      font-size: 0.65em;
+      font-weight: 700;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      position: absolute;
+      color: #f44336;
     }
-    .pump-on::after { 
-      content: "Ativa"; 
-      color: #16a34a; 
+    .pump-on::after { content: "Ativa"; color: #16a34a; }
+    .pump-on { background-color: #22c55e; }
+    .pump-off { background-color: #ef4444; }
+    input[type="number"] {
+      padding: 7px;
+      margin: 5px;
+      border: 1px solid #90a4ae;
+      border-radius: 6px;
+      font-size: 0.85em;
+      width: 105px;
+      text-align: center;
     }
-    .pump-on { 
-      background-color: #22c55e; 
-      box-shadow: 0 0 0 4px rgba(34,197,94,0.18), 0 0 22px rgba(34,197,94,0.45); 
-      transform: scale(1.06);
-    }
-    .pump-off { 
-      background-color: #ef4444; 
-      box-shadow: 0 0 0 4px rgba(239,68,68,0.15), 0 0 18px rgba(239,68,68,0.28); 
-    }
-    input[type="number"] { 
-      padding: 12px; 
-      margin: 10px; 
-      border: 2px solid #90a4ae; 
-      border-radius: 8px; 
-      font-size: 1em; 
-      width: 140px; 
-      text-align: center; 
-    }
-    input[type="submit"] { 
-      padding: 12px 24px; 
-      background: #607d8b; 
-      color: white; 
-      border: none; 
-      border-radius: 8px; 
-      cursor: pointer; 
-      font-weight: 600; 
-      transition: background 0.3s ease; 
-    }
-    input[type="submit"]:hover { 
-      background: #546e7a; 
+    input[type="submit"] {
+      padding: 7px 12px;
+      background: #607d8b;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.8em;
     }
   </style>
 </head>
@@ -212,3 +178,4 @@ const char OTA_SERVER_INDEX[] PROGMEM = R"rawliteral(
 )rawliteral";
 
 #endif
+

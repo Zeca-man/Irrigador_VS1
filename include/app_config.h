@@ -14,7 +14,7 @@ namespace AppConfig {
 
   constexpr long TIMER_INTERVALO_BOMBA_MS = 10000;
   constexpr long INTERVALO_SENSOR_MS = 5000;
-  constexpr float INDICE_THRESHOLD = 40.0f;
+  constexpr float INDICE_THRESHOLD = 75.0f;
   constexpr long INTERVALO_EMAIL_H = 24;
   constexpr short QTD_CICLOS_TIMER = 12;
   constexpr long TEMPO_FLAG_BOMBA_TRAVADA = 250;

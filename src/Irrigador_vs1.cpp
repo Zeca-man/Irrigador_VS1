@@ -18,10 +18,10 @@
 #include <ESPmDNS.h>
 #include <WebServer.h>
 #include <ESP_Mail_Client.h>
+#include <LittleFS.h>
 #include <Preferences.h>
 #include <Update.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
+#include <time.h>
 #include "web_pages.h"
 #include "app_config.h"
 #include "secrets.h"
@@ -29,6 +29,44 @@
 const char* ntpServer = AppConfig::NTP_SERVER;
 const long gmtOffset_sec = AppConfig::GMT_OFFSET_SEC;
 const int daylightOffset_sec = AppConfig::DAYLIGHT_OFFSET_SEC;
+constexpr const char* HOURLY_LOG_PATH = "/hourly_log.csv";
+constexpr size_t HISTORY_HOURS = 24 * 7;
+constexpr size_t HISTORY_DAYS = 7;
+constexpr unsigned long CLOCK_SYNC_RETRY_MS = 60000;
+constexpr time_t MIN_VALID_EPOCH = 1704067200;
+
+struct HourlyStats {
+  time_t hourStart = 0;
+  unsigned long irrigSec1 = 0;
+  unsigned long irrigSec2 = 0;
+  unsigned int cycles1 = 0;
+  unsigned int cycles2 = 0;
+  unsigned long sensor1Sum = 0;
+  unsigned long sensor2Sum = 0;
+  unsigned int sensorSamples = 0;
+};
+
+struct DailyStats {
+  time_t dayStart = 0;
+  unsigned long irrigSec1 = 0;
+  unsigned long irrigSec2 = 0;
+  unsigned int cycles1 = 0;
+  unsigned int cycles2 = 0;
+  unsigned long sensor1Sum = 0;
+  unsigned long sensor2Sum = 0;
+  unsigned int sensorSamples = 0;
+  String label;
+};
+
+struct PumpCycleState {
+  bool active = false;
+  bool manual = false;
+  time_t startedAt = 0;
+  long sensorStart1 = 0;
+  long sensorStart2 = 0;
+  float threshold1 = 0.0f;
+  float threshold2 = 0.0f;
+};
 
 long timerIntervaloBomba = AppConfig::TIMER_INTERVALO_BOMBA_MS;   // Tamanho do ciclo para ligar e desligar bomba
 float indiceThreshold = AppConfig::INDICE_THRESHOLD;
@@ -56,6 +94,29 @@ ESP_Mail_Session session;
 void smtpCallback(SMTP_Status status);
 bool connectWiFiWithTimeout(unsigned long timeoutMs);
 void maintainWiFi();
+bool ensureWiFiReadyForEmail();
+bool initFileSystem();
+void syncClockIfNeeded(bool forceAttempt = false);
+bool getCurrentEpoch(time_t& epochNow);
+time_t getHourStart(time_t epochNow);
+time_t getDayStart(time_t epochNow);
+String formatTimestamp(time_t timestamp);
+String formatDayLabel(time_t timestamp);
+String formatDuration(unsigned long totalSeconds);
+bool ensureHourlyStatsCurrent();
+void addSensorSnapshotToHourlyStats(long currentSensor1, long currentSensor2);
+void addPumpRuntimeToHourlyStats(uint8_t pumpNumber, unsigned long seconds);
+void addCycleToHourlyStats(uint8_t pumpNumber);
+void persistHourlyStats(const HourlyStats& stats);
+bool parseHourlyStatsLine(const String& line, HourlyStats& stats);
+void accumulateDailyStats(DailyStats* days, const HourlyStats& stats);
+String buildLast7DaysTableHtml();
+String buildStartupEmailBody(const String& ipAddress);
+String buildCycleSummaryEmailBody(uint8_t pumpNumber, const PumpCycleState& cycle, unsigned long durationSeconds, const String& reason);
+void startPumpCycle(PumpCycleState& cycle, bool manualMode);
+String getCycleEndReason(const PumpCycleState& cycle, bool travada, bool manualRequestedOn);
+void finishPumpCycle(uint8_t pumpNumber, PumpCycleState& cycle, bool travada, bool manualRequestedOn, long& durationSeconds);
+void handlePumpCycleTransition(uint8_t pumpNumber, bool isOn, bool& previousState, PumpCycleState& cycle, bool manualMode, bool travada, bool manualRequestedOn, long& durationSeconds);
 
 const int output1 = AppConfig::OUTPUT1_PIN;  // GPIO comando rele 1
 const int output2 = AppConfig::OUTPUT2_PIN;   // GPIO comando rele 2
@@ -93,9 +154,6 @@ int medidasArray2[SENSOR_SAMPLE_SIZE] = {0};
 int sampleIndex = 0;
 int sampleCount = 0;
 
-short flagEmail1 = 0; // flag para comandar o envio de email
-short flagEmail2 = 0; // flag para comandar o envio de email
-
 short tempoBombaLigada = 0;
 float limiteCorrigidoMais1 = 1300;
 float limiteCorrigidoMenos1 = 1200;
@@ -109,10 +167,18 @@ long previousMillis3 = 0;
 long previousMillis4 = 0;
 long previousMillis5 = 0;
 unsigned long lastWiFiReconnectAttempt = 0;
+unsigned long lastClockSyncAttempt = 0;
 
 long interval = AppConfig::INTERVALO_SENSOR_MS;    // tempo entre medidas do sensor
 long tempoB1Ligada = 0;  // tempo da B1 ligada no ciclo de irrigação
 long tempoB2Ligada = 0;  // tempo da B2 ligada no ciclo de irrigação
+bool clockSynchronized = false;
+bool currentHourLoaded = false;
+bool lastPump1OutputState = false;
+bool lastPump2OutputState = false;
+HourlyStats currentHourlyStats;
+PumpCycleState pump1CycleState;
+PumpCycleState pump2CycleState;
 
 
 // WebServer instance
@@ -175,6 +241,8 @@ void setup() {
   digitalWrite(output1, HIGH);
   digitalWrite(output2, HIGH);
   digitalWrite(ledPlaca, HIGH);
+  lastPump1OutputState = false;
+  lastPump2OutputState = false;
   Serial.println("Saida 1 e 2 colocada em HIGH");
   intervaloEnviarEmail = intervaloEnviarEmailTemp * 3600000;
 
@@ -183,6 +251,8 @@ void setup() {
   inputMessage1 = preferences.getString("Limite1", "0");
   inputMessage2 = preferences.getString("Limite2", "0");
   preferences.end();
+
+  initFileSystem();
 
   // Conectar ao WiFi
   WiFi.mode(WIFI_STA);
@@ -196,6 +266,7 @@ void setup() {
     Serial.println(wifiConnectedMsg);
     Serial.print("IP -> ");
     Serial.println(WiFi.localIP());
+    syncClockIfNeeded(true);
   } else {
     Serial.println("WiFi indisponivel no boot. O sistema continuara sem bloqueio.");
   }
@@ -339,15 +410,12 @@ void setup() {
   Serial.println("Servidor iniciado");
 
   // Enviar e-mail no power-up
-  String html = renderHomePage();
   if (WiFi.status() == WL_CONNECTED) {
     String ip = WiFi.localIP().toString();
-    String assuntoparaemail = F("Genius PowerUp! A unidade ");
+    String html = buildStartupEmailBody(ip);
+    String assuntoparaemail = F("Startup ");
     assuntoparaemail += AppConfig::NOME_IRRIGADOR;
-    assuntoparaemail += F(" acabou de ligar. Conectado no ");
-    assuntoparaemail += ip;
-    assuntoparaemail += ' ';
-    assuntoparaemail += __FILE__;
+    assuntoparaemail += F(" - historico 7 dias");
     envioemail(html, assuntoparaemail);
   } else {
     Serial.println("Email de power-up nao enviado (sem WiFi).");
@@ -356,6 +424,7 @@ void setup() {
 
 void loop() {
   maintainWiFi();
+  syncClockIfNeeded();
   server.handleClient();
 
   // TIMER DE INTERVALO DOS CICLOS DA BOMBA
@@ -416,6 +485,7 @@ void loop() {
     sensorLog += F(" seg - flag da bomba-> ");
     sensorLog += tempoBombaLigada;
     Serial.println(sensorLog);
+    addSensorSnapshotToHourlyStats(sensor1, sensor2);
   }
 
   // DEFINIR FLAG DE BAIXA UMIDADE
@@ -444,6 +514,7 @@ void loop() {
       if (currentMillis3 - previousMillis3 >= 1000) {
         previousMillis3 = currentMillis3;
         tempoB1Ligada = tempoB1Ligada + 1;
+        addPumpRuntimeToHourlyStats(1, 1);
         if (tempoB1Ligada > tempoFlagBombaTravada) {
           flagBomba1Travada = 1;
           manualOverride1 = false;
@@ -463,6 +534,7 @@ void loop() {
     if (currentMillis3 - previousMillis3 >= 1000) {
       previousMillis3 = currentMillis3;
       tempoB1Ligada = tempoB1Ligada + 1;
+      addPumpRuntimeToHourlyStats(1, 1);
       if (tempoB1Ligada > tempoFlagBombaTravada) {
         flagBomba1Travada = 1;
         String assuntoparaemail = F("Bomba 1 foi travada. Funcionou por ");
@@ -484,6 +556,7 @@ void loop() {
       if (currentMillis4 - previousMillis4 >= 1000) {
         previousMillis4 = currentMillis4;
         tempoB2Ligada = tempoB2Ligada + 1;
+        addPumpRuntimeToHourlyStats(2, 1);
         if (tempoB2Ligada > tempoFlagBombaTravada) {
           flagBomba2Travada = 1;
           manualOverride2 = false;
@@ -503,6 +576,7 @@ void loop() {
     if (currentMillis4 - previousMillis4 >= 1000) {
       previousMillis4 = currentMillis4;
       tempoB2Ligada = tempoB2Ligada + 1;
+      addPumpRuntimeToHourlyStats(2, 1);
       if (tempoB2Ligada > tempoFlagBombaTravada) {
         flagBomba2Travada = 1;
         String assuntoparaemail = F("Bomba 2 foi travada. Funcionou por ");
@@ -516,63 +590,10 @@ void loop() {
     digitalWrite(output2, HIGH);
   }
 
-  // ENVIO DE EMAIL QUANDO DA MUDANÇA DE ESTADO SENSOR 1
-  if (flagBxHumidade1 && flagEmail1 == 0) {
-    String textoparaemail = F("Bomba ligada - Sensor1 -> ");
-    textoparaemail += sensor1;
-    textoparaemail += F(" - Sensor2 -> ");
-    textoparaemail += sensor2;
-    textoparaemail += F(" - dado inserido ->");
-    textoparaemail += String(float(inputMessage1.toFloat()));
-    String assuntoparaemail = F("Ligando a Bomba 1 - Mensagem do irrigador");
-    Serial.println(textoparaemail);
-    flagEmail1 = 1;
-    envioemail(textoparaemail, assuntoparaemail);
-  }
-  if (!flagBxHumidade1 && flagEmail1 == 1) {
-    String textoparaemail = F("Bomba 1 funcionou por ");
-    textoparaemail += tempoB1Ligada;
-    textoparaemail += F(" segundos. Dados do sensores - Sensor1 -> ");
-    textoparaemail += sensor1;
-    textoparaemail += F(" - Sensor2 -> ");
-    textoparaemail += sensor2;
-    String assuntoparaemail = F("Resumo da ativacao da bomba 1. Funcionou por ");
-    assuntoparaemail += tempoB1Ligada;
-    assuntoparaemail += F(" segundos. Status Bomba 1 Desligada");
-    Serial.println(textoparaemail);
-    tempoB1Ligada = 0;
-    flagEmail1 = 0;
-    envioemail(textoparaemail, assuntoparaemail);
-  }
-
-  // ENVIO DE EMAIL QUANDO DA MUDANÇA DE ESTADO SENSOR 2
-  if (flagBxHumidade2 && flagEmail2 == 0) {
-    String textoparaemail = F("Bomba ligada - Sensor1 -> ");
-    textoparaemail += sensor1;
-    textoparaemail += F(" - Sensor2 -> ");
-    textoparaemail += sensor2;
-    textoparaemail += F(" - dado inserido ->");
-    textoparaemail += String(float(inputMessage2.toFloat()));
-    String assuntoparaemail = F("Ligando a Bomba 2 - Mensagem do irrigador");
-    Serial.println(textoparaemail);
-    flagEmail2 = 1;
-    envioemail(textoparaemail, assuntoparaemail);
-  }
-  if (!flagBxHumidade2 && flagEmail2 == 1) {
-    String textoparaemail = F("Bomba 2 funcionou por ");
-    textoparaemail += tempoB2Ligada;
-    textoparaemail += F(" segundos. Dados do sensores - Sensor1 -> ");
-    textoparaemail += sensor1;
-    textoparaemail += F(" - Sensor2 -> ");
-    textoparaemail += sensor2;
-    String assuntoparaemail = F("Resumo da ativacao da bomba 2. Funcionou por ");
-    assuntoparaemail += tempoB2Ligada;
-    assuntoparaemail += F(" segundos. Status Bomba 2 Desligada");
-    Serial.println(textoparaemail);
-    tempoB2Ligada = 0;
-    flagEmail2 = 0;
-    envioemail(textoparaemail, assuntoparaemail);
-  }
+  bool pump1IsOn = digitalRead(output1) == LOW;
+  bool pump2IsOn = digitalRead(output2) == LOW;
+  handlePumpCycleTransition(1, pump1IsOn, lastPump1OutputState, pump1CycleState, manualOverride1, flagBomba1Travada == 1, manualPump1State, tempoB1Ligada);
+  handlePumpCycleTransition(2, pump2IsOn, lastPump2OutputState, pump2CycleState, manualOverride2, flagBomba2Travada == 1, manualPump2State, tempoB2Ligada);
 
   // Temporizador para enviar email com info do valor do sensor
   unsigned long currentMillis1 = millis();
@@ -644,6 +665,505 @@ void loop() {
     assuntoparaemail += WiFi.localIP().toString();
     envioemail(textoparaemail, assuntoparaemail);
   }
+}
+
+bool initFileSystem() {
+  if (!LittleFS.begin(true)) {
+    Serial.println("Falha ao montar LittleFS.");
+    return false;
+  }
+
+  Serial.println("LittleFS pronto.");
+  return true;
+}
+
+bool ensureWiFiReadyForEmail() {
+  if (WiFi.status() == WL_CONNECTED) {
+    return true;
+  }
+
+  Serial.println("WiFi desconectado. Tentando reconectar para envio de email...");
+  if (!connectWiFiWithTimeout(AppConfig::WIFI_CONNECT_TIMEOUT_MS)) {
+    Serial.println("Falha na reconexao WiFi. Email nao enviado.");
+    return false;
+  }
+
+  syncClockIfNeeded(true);
+  return true;
+}
+
+void syncClockIfNeeded(bool forceAttempt) {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  time_t epochNow = time(nullptr);
+  if (epochNow >= MIN_VALID_EPOCH) {
+    clockSynchronized = true;
+    return;
+  }
+
+  unsigned long currentMillis = millis();
+  if (!forceAttempt && (currentMillis - lastClockSyncAttempt) < CLOCK_SYNC_RETRY_MS) {
+    return;
+  }
+
+  lastClockSyncAttempt = currentMillis;
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo, 1000)) {
+    clockSynchronized = true;
+    char timeBuffer[24];
+    strftime(timeBuffer, sizeof(timeBuffer), "%d/%m/%Y %H:%M:%S", &timeinfo);
+    Serial.print("Relogio sincronizado em ");
+    Serial.println(timeBuffer);
+  } else {
+    Serial.println("Relogio ainda nao sincronizado.");
+  }
+}
+
+bool getCurrentEpoch(time_t& epochNow) {
+  epochNow = time(nullptr);
+  if (epochNow < MIN_VALID_EPOCH) {
+    return false;
+  }
+
+  return true;
+}
+
+time_t getHourStart(time_t epochNow) {
+  struct tm timeinfo;
+  localtime_r(&epochNow, &timeinfo);
+  timeinfo.tm_min = 0;
+  timeinfo.tm_sec = 0;
+  return mktime(&timeinfo);
+}
+
+time_t getDayStart(time_t epochNow) {
+  struct tm timeinfo;
+  localtime_r(&epochNow, &timeinfo);
+  timeinfo.tm_hour = 0;
+  timeinfo.tm_min = 0;
+  timeinfo.tm_sec = 0;
+  return mktime(&timeinfo);
+}
+
+String formatTimestamp(time_t timestamp) {
+  if (timestamp < MIN_VALID_EPOCH) {
+    return F("sem horario sincronizado");
+  }
+
+  struct tm timeinfo;
+  localtime_r(&timestamp, &timeinfo);
+  char buffer[24];
+  strftime(buffer, sizeof(buffer), "%d/%m/%Y %H:%M", &timeinfo);
+  return String(buffer);
+}
+
+String formatDayLabel(time_t timestamp) {
+  if (timestamp < MIN_VALID_EPOCH) {
+    return F("--/--");
+  }
+
+  struct tm timeinfo;
+  localtime_r(&timestamp, &timeinfo);
+  char buffer[12];
+  strftime(buffer, sizeof(buffer), "%d/%m", &timeinfo);
+  return String(buffer);
+}
+
+String formatDuration(unsigned long totalSeconds) {
+  unsigned long hours = totalSeconds / 3600;
+  unsigned long minutes = (totalSeconds % 3600) / 60;
+  unsigned long seconds = totalSeconds % 60;
+
+  String result;
+  result.reserve(24);
+  result += hours;
+  result += F("h ");
+  if (minutes < 10) {
+    result += '0';
+  }
+  result += minutes;
+  result += F("m ");
+  if (seconds < 10) {
+    result += '0';
+  }
+  result += seconds;
+  result += 's';
+  return result;
+}
+
+bool ensureHourlyStatsCurrent() {
+  time_t epochNow = 0;
+  if (!getCurrentEpoch(epochNow)) {
+    return false;
+  }
+
+  time_t hourStart = getHourStart(epochNow);
+  if (!currentHourLoaded) {
+    currentHourlyStats = HourlyStats();
+    currentHourlyStats.hourStart = hourStart;
+    currentHourLoaded = true;
+    return true;
+  }
+
+  if (currentHourlyStats.hourStart != hourStart) {
+    persistHourlyStats(currentHourlyStats);
+    currentHourlyStats = HourlyStats();
+    currentHourlyStats.hourStart = hourStart;
+  }
+
+  return true;
+}
+
+void addSensorSnapshotToHourlyStats(long currentSensor1, long currentSensor2) {
+  if (!ensureHourlyStatsCurrent()) {
+    return;
+  }
+
+  currentHourlyStats.sensor1Sum += static_cast<unsigned long>(currentSensor1);
+  currentHourlyStats.sensor2Sum += static_cast<unsigned long>(currentSensor2);
+  currentHourlyStats.sensorSamples++;
+}
+
+void addPumpRuntimeToHourlyStats(uint8_t pumpNumber, unsigned long seconds) {
+  if (!ensureHourlyStatsCurrent()) {
+    return;
+  }
+
+  if (pumpNumber == 1) {
+    currentHourlyStats.irrigSec1 += seconds;
+  } else if (pumpNumber == 2) {
+    currentHourlyStats.irrigSec2 += seconds;
+  }
+}
+
+void addCycleToHourlyStats(uint8_t pumpNumber) {
+  if (!ensureHourlyStatsCurrent()) {
+    return;
+  }
+
+  if (pumpNumber == 1) {
+    currentHourlyStats.cycles1++;
+  } else if (pumpNumber == 2) {
+    currentHourlyStats.cycles2++;
+  }
+}
+
+void persistHourlyStats(const HourlyStats& stats) {
+  if (stats.hourStart < MIN_VALID_EPOCH) {
+    return;
+  }
+
+  char newLine[160];
+  snprintf(
+    newLine,
+    sizeof(newLine),
+    "%lld,%lu,%lu,%u,%u,%lu,%lu,%u\n",
+    static_cast<long long>(stats.hourStart),
+    stats.irrigSec1,
+    stats.irrigSec2,
+    stats.cycles1,
+    stats.cycles2,
+    stats.sensor1Sum,
+    stats.sensor2Sum,
+    stats.sensorSamples
+  );
+
+  String fileContent;
+  File file = LittleFS.open(HOURLY_LOG_PATH, "r");
+  if (file) {
+    fileContent = file.readString();
+    file.close();
+  }
+
+  if (fileContent.length() > 0 && !fileContent.endsWith("\n")) {
+    fileContent += '\n';
+  }
+  fileContent += newLine;
+
+  size_t lineCount = 0;
+  for (size_t i = 0; i < fileContent.length(); i++) {
+    if (fileContent[i] == '\n') {
+      lineCount++;
+    }
+  }
+
+  while (lineCount > HISTORY_HOURS) {
+    int newlinePos = fileContent.indexOf('\n');
+    if (newlinePos < 0) {
+      break;
+    }
+    fileContent.remove(0, newlinePos + 1);
+    lineCount--;
+  }
+
+  file = LittleFS.open(HOURLY_LOG_PATH, "w");
+  if (!file) {
+    Serial.println("Falha ao gravar historico horario.");
+    return;
+  }
+
+  file.print(fileContent);
+  file.close();
+}
+
+bool parseHourlyStatsLine(const String& rawLine, HourlyStats& stats) {
+  String line = rawLine;
+  line.trim();
+  if (line.length() == 0 || line.length() >= 160) {
+    return false;
+  }
+
+  char buffer[160];
+  line.toCharArray(buffer, sizeof(buffer));
+
+  char* context = nullptr;
+  char* token = strtok_r(buffer, ",", &context);
+  if (token == nullptr) {
+    return false;
+  }
+
+  stats = HourlyStats();
+  stats.hourStart = static_cast<time_t>(strtoll(token, nullptr, 10));
+
+  token = strtok_r(nullptr, ",", &context);
+  if (token == nullptr) {
+    return false;
+  }
+  stats.irrigSec1 = strtoul(token, nullptr, 10);
+
+  token = strtok_r(nullptr, ",", &context);
+  if (token == nullptr) {
+    return false;
+  }
+  stats.irrigSec2 = strtoul(token, nullptr, 10);
+
+  token = strtok_r(nullptr, ",", &context);
+  if (token == nullptr) {
+    return false;
+  }
+  stats.cycles1 = static_cast<unsigned int>(strtoul(token, nullptr, 10));
+
+  token = strtok_r(nullptr, ",", &context);
+  if (token == nullptr) {
+    return false;
+  }
+  stats.cycles2 = static_cast<unsigned int>(strtoul(token, nullptr, 10));
+
+  token = strtok_r(nullptr, ",", &context);
+  if (token == nullptr) {
+    return false;
+  }
+  stats.sensor1Sum = strtoul(token, nullptr, 10);
+
+  token = strtok_r(nullptr, ",", &context);
+  if (token == nullptr) {
+    return false;
+  }
+  stats.sensor2Sum = strtoul(token, nullptr, 10);
+
+  token = strtok_r(nullptr, ",", &context);
+  if (token == nullptr) {
+    return false;
+  }
+  stats.sensorSamples = static_cast<unsigned int>(strtoul(token, nullptr, 10));
+
+  return stats.hourStart >= MIN_VALID_EPOCH;
+}
+
+void accumulateDailyStats(DailyStats* days, const HourlyStats& stats) {
+  for (size_t i = 0; i < HISTORY_DAYS; i++) {
+    if (stats.hourStart >= days[i].dayStart && stats.hourStart < (days[i].dayStart + 86400)) {
+      days[i].irrigSec1 += stats.irrigSec1;
+      days[i].irrigSec2 += stats.irrigSec2;
+      days[i].cycles1 += stats.cycles1;
+      days[i].cycles2 += stats.cycles2;
+      days[i].sensor1Sum += stats.sensor1Sum;
+      days[i].sensor2Sum += stats.sensor2Sum;
+      days[i].sensorSamples += stats.sensorSamples;
+      break;
+    }
+  }
+}
+
+String buildLast7DaysTableHtml() {
+  String html = F("<h3>Ultimos 7 dias</h3>");
+
+  time_t epochNow = 0;
+  if (!getCurrentEpoch(epochNow)) {
+    html += F("<p>Historico indisponivel porque o relogio ainda nao foi sincronizado.</p>");
+    return html;
+  }
+
+  DailyStats days[HISTORY_DAYS];
+  time_t todayStart = getDayStart(epochNow);
+  for (size_t i = 0; i < HISTORY_DAYS; i++) {
+    days[i].dayStart = todayStart - static_cast<time_t>((HISTORY_DAYS - 1 - i) * 86400);
+    days[i].label = formatDayLabel(days[i].dayStart);
+  }
+
+  File file = LittleFS.open(HOURLY_LOG_PATH, "r");
+  if (file) {
+    while (file.available()) {
+      HourlyStats stats;
+      if (parseHourlyStatsLine(file.readStringUntil('\n'), stats)) {
+        accumulateDailyStats(days, stats);
+      }
+    }
+    file.close();
+  }
+
+  if (currentHourLoaded) {
+    accumulateDailyStats(days, currentHourlyStats);
+  }
+
+  html += F("<table border='1' cellpadding='4' cellspacing='0' style='border-collapse:collapse;'>");
+  html += F("<tr><th rowspan='2'>Dia</th><th colspan='2'>Bomba 1</th><th colspan='2'>Bomba 2</th><th rowspan='2'>Media S1</th><th rowspan='2'>Media S2</th></tr>");
+  html += F("<tr><th>Tempo</th><th>Ciclos</th><th>Tempo</th><th>Ciclos</th></tr>");
+  for (size_t i = 0; i < HISTORY_DAYS; i++) {
+    String avgSensor1 = F("-");
+    String avgSensor2 = F("-");
+    if (days[i].sensorSamples > 0) {
+      avgSensor1 = String(days[i].sensor1Sum / days[i].sensorSamples);
+      avgSensor2 = String(days[i].sensor2Sum / days[i].sensorSamples);
+    }
+
+    html += F("<tr><td>");
+    html += days[i].label;
+    html += F("</td><td>");
+    html += formatDuration(days[i].irrigSec1);
+    html += F("</td><td>");
+    html += days[i].cycles1;
+    html += F("</td><td>");
+    html += formatDuration(days[i].irrigSec2);
+    html += F("</td><td>");
+    html += days[i].cycles2;
+    html += F("</td><td>");
+    html += avgSensor1;
+    html += F("</td><td>");
+    html += avgSensor2;
+    html += F("</td></tr>");
+  }
+  html += F("</table>");
+
+  return html;
+}
+
+String buildStartupEmailBody(const String& ipAddress) {
+  String html = F("<html><body style='font-family:Arial,sans-serif;'>");
+  html += buildLast7DaysTableHtml();
+  html += F("<p style='margin-top:16px;font-size:12px;color:#5b6b68;'>");
+  html += __FILE__;
+  html += F(" | IP ");
+  html += ipAddress;
+  html += F("</p></body></html>");
+  return html;
+}
+
+String buildCycleSummaryEmailBody(uint8_t pumpNumber, const PumpCycleState& cycle, unsigned long durationSeconds, const String& reason) {
+  time_t finishedAt = 0;
+  getCurrentEpoch(finishedAt);
+
+  String html = F("<html><body style='font-family:Arial,sans-serif;'>");
+  html += F("<h2>Resumo do ciclo de irrigacao</h2>");
+  html += F("<table border='1' cellpadding='4' cellspacing='0' style='border-collapse:collapse;'>");
+  html += F("<tr><td>Unidade</td><td>");
+  html += AppConfig::NOME_IRRIGADOR;
+  html += F("</td></tr><tr><td>Bomba</td><td>");
+  html += String(pumpNumber);
+  html += F("</td></tr><tr><td>Modo</td><td>");
+  html += cycle.manual ? F("manual") : F("automatico");
+  html += F("</td></tr><tr><td>Inicio</td><td>");
+  html += formatTimestamp(cycle.startedAt);
+  html += F("</td></tr><tr><td>Fim</td><td>");
+  html += formatTimestamp(finishedAt);
+  html += F("</td></tr><tr><td>Duracao</td><td>");
+  html += formatDuration(durationSeconds);
+  html += F("</td></tr><tr><td>Motivo do encerramento</td><td>");
+  html += reason;
+  html += F("</td></tr><tr><td>Sensor 1</td><td>");
+  html += cycle.sensorStart1;
+  html += F(" -> ");
+  html += sensor1;
+  html += F("</td></tr><tr><td>Sensor 2</td><td>");
+  html += cycle.sensorStart2;
+  html += F(" -> ");
+  html += sensor2;
+  html += F("</td></tr><tr><td>Limites</td><td>S1 ");
+  html += String(cycle.threshold1, 0);
+  html += F(" / S2 ");
+  html += String(cycle.threshold2, 0);
+  html += F("</td></tr></table>");
+  html += buildLast7DaysTableHtml();
+  html += F("</body></html>");
+  return html;
+}
+
+void startPumpCycle(PumpCycleState& cycle, bool manualMode) {
+  cycle = PumpCycleState();
+  cycle.active = true;
+  cycle.manual = manualMode;
+  getCurrentEpoch(cycle.startedAt);
+  cycle.sensorStart1 = sensor1;
+  cycle.sensorStart2 = sensor2;
+  cycle.threshold1 = inputMessage1.toFloat();
+  cycle.threshold2 = inputMessage2.toFloat();
+}
+
+String getCycleEndReason(const PumpCycleState& cycle, bool travada, bool manualRequestedOn) {
+  if (travada) {
+    return F("travamento por tempo maximo");
+  }
+
+  if (cycle.manual && !manualRequestedOn) {
+    return F("desligamento manual");
+  }
+
+  if (cycle.manual) {
+    return F("ciclo manual encerrado");
+  }
+
+  return F("umidade normalizada");
+}
+
+void finishPumpCycle(uint8_t pumpNumber, PumpCycleState& cycle, bool travada, bool manualRequestedOn, long& durationSeconds) {
+  if (!cycle.active) {
+    durationSeconds = 0;
+    return;
+  }
+
+  addCycleToHourlyStats(pumpNumber);
+  String reason = getCycleEndReason(cycle, travada, manualRequestedOn);
+
+  if (ensureWiFiReadyForEmail()) {
+    String subject = F("Resumo do ciclo da bomba ");
+    subject += String(pumpNumber);
+    subject += F(" - ");
+    subject += AppConfig::NOME_IRRIGADOR;
+    String body = buildCycleSummaryEmailBody(pumpNumber, cycle, durationSeconds, reason);
+    envioemail(body, subject);
+  } else {
+    Serial.println("Resumo do ciclo nao enviado por falta de WiFi.");
+  }
+
+  durationSeconds = 0;
+  cycle = PumpCycleState();
+}
+
+void handlePumpCycleTransition(uint8_t pumpNumber, bool isOn, bool& previousState, PumpCycleState& cycle, bool manualMode, bool travada, bool manualRequestedOn, long& durationSeconds) {
+  if (isOn && !previousState) {
+    durationSeconds = 0;
+    startPumpCycle(cycle, manualMode);
+  } else if (!isOn && previousState) {
+    finishPumpCycle(pumpNumber, cycle, travada, manualRequestedOn, durationSeconds);
+  } else if (isOn && !cycle.active) {
+    startPumpCycle(cycle, manualMode);
+  }
+
+  previousState = isOn;
 }
 
 bool connectWiFiWithTimeout(unsigned long timeoutMs) {
