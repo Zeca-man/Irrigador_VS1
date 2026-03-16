@@ -18,6 +18,8 @@
 #include <ESPmDNS.h>
 #include <WebServer.h>
 #include <ESP_Mail_Client.h>
+#include <json/FirebaseJson.h>
+#include <ESP_Google_Sheet_Client.h>
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <Update.h>
@@ -97,12 +99,16 @@ void maintainWiFi();
 bool ensureWiFiReadyForEmail();
 bool initFileSystem();
 void syncClockIfNeeded(bool forceAttempt = false);
+void initGoogleSheetsClientIfNeeded();
+void maintainGoogleSheets();
+bool ensureGoogleSheetsSheetTitle();
 bool getCurrentEpoch(time_t& epochNow);
 time_t getHourStart(time_t epochNow);
 time_t getDayStart(time_t epochNow);
 String formatTimestamp(time_t timestamp);
 String formatDayLabel(time_t timestamp);
 String formatDuration(unsigned long totalSeconds);
+String buildGoogleSheetsRange(const char* a1Range);
 bool ensureHourlyStatsCurrent();
 void addSensorSnapshotToHourlyStats(long currentSensor1, long currentSensor2);
 void addPumpRuntimeToHourlyStats(uint8_t pumpNumber, unsigned long seconds);
@@ -113,6 +119,9 @@ void accumulateDailyStats(DailyStats* days, const HourlyStats& stats);
 String buildLast7DaysTableHtml();
 String buildStartupEmailBody(const String& ipAddress);
 String buildCycleSummaryEmailBody(uint8_t pumpNumber, const PumpCycleState& cycle, unsigned long durationSeconds, const String& reason);
+bool ensureGoogleSheetsHeader();
+bool appendGoogleSheetsSnapshot();
+void googleSheetsTokenStatusCallback(TokenInfo info);
 void startPumpCycle(PumpCycleState& cycle, bool manualMode);
 String getCycleEndReason(const PumpCycleState& cycle, bool travada, bool manualRequestedOn);
 void finishPumpCycle(uint8_t pumpNumber, PumpCycleState& cycle, bool travada, bool manualRequestedOn, long& durationSeconds);
@@ -168,6 +177,7 @@ long previousMillis4 = 0;
 long previousMillis5 = 0;
 unsigned long lastWiFiReconnectAttempt = 0;
 unsigned long lastClockSyncAttempt = 0;
+unsigned long lastGoogleSheetsAttempt = 0;
 
 long interval = AppConfig::INTERVALO_SENSOR_MS;    // tempo entre medidas do sensor
 long tempoB1Ligada = 0;  // tempo da B1 ligada no ciclo de irrigação
@@ -176,6 +186,9 @@ bool clockSynchronized = false;
 bool currentHourLoaded = false;
 bool lastPump1OutputState = false;
 bool lastPump2OutputState = false;
+bool googleSheetsClientStarted = false;
+bool googleSheetsHeaderEnsured = false;
+String googleSheetsSheetTitle;
 HourlyStats currentHourlyStats;
 PumpCycleState pump1CycleState;
 PumpCycleState pump2CycleState;
@@ -267,6 +280,7 @@ void setup() {
     Serial.print("IP -> ");
     Serial.println(WiFi.localIP());
     syncClockIfNeeded(true);
+    initGoogleSheetsClientIfNeeded();
   } else {
     Serial.println("WiFi indisponivel no boot. O sistema continuara sem bloqueio.");
   }
@@ -425,6 +439,7 @@ void setup() {
 void loop() {
   maintainWiFi();
   syncClockIfNeeded();
+  maintainGoogleSheets();
   server.handleClient();
 
   // TIMER DE INTERVALO DOS CICLOS DA BOMBA
@@ -721,6 +736,188 @@ void syncClockIfNeeded(bool forceAttempt) {
   } else {
     Serial.println("Relogio ainda nao sincronizado.");
   }
+}
+
+void initGoogleSheetsClientIfNeeded() {
+  if (googleSheetsClientStarted || WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  GSheet.setTokenCallback(googleSheetsTokenStatusCallback);
+  GSheet.setPrerefreshSeconds(10 * 60);
+  GSheet.begin(Secrets::GOOGLE_CLIENT_EMAIL, Secrets::GOOGLE_PROJECT_ID, Secrets::GOOGLE_PRIVATE_KEY);
+  googleSheetsClientStarted = true;
+  lastGoogleSheetsAttempt = millis();
+  Serial.println("Cliente Google Sheets inicializado.");
+}
+
+void maintainGoogleSheets() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  initGoogleSheetsClientIfNeeded();
+  if (!googleSheetsClientStarted || !clockSynchronized || !GSheet.ready()) {
+    return;
+  }
+
+  if (!ensureGoogleSheetsSheetTitle()) {
+    return;
+  }
+
+  if (!ensureGoogleSheetsHeader()) {
+    return;
+  }
+
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastGoogleSheetsAttempt < AppConfig::GOOGLE_SHEETS_UPDATE_INTERVAL_MS) {
+    return;
+  }
+
+  lastGoogleSheetsAttempt = currentMillis;
+  appendGoogleSheetsSnapshot();
+}
+
+bool ensureGoogleSheetsSheetTitle() {
+  if (googleSheetsSheetTitle.length() > 0) {
+    return true;
+  }
+
+  FirebaseJson response;
+  if (!GSheet.get(&response, Secrets::GOOGLE_SPREADSHEET_ID)) {
+    Serial.print("Falha ao consultar metadados da planilha Google Sheets: ");
+    Serial.println(GSheet.errorReason());
+    return false;
+  }
+
+  FirebaseJsonData result;
+  response.get(result, "sheets/[0]/properties/title");
+  if (!result.success) {
+    Serial.println("Nao foi possivel identificar o nome da primeira aba da planilha.");
+    return false;
+  }
+
+  googleSheetsSheetTitle = result.to<String>();
+  googleSheetsSheetTitle.trim();
+  if (googleSheetsSheetTitle.length() == 0) {
+    Serial.println("A planilha retornou um nome de aba vazio.");
+    return false;
+  }
+
+  String logMessage = F("Aba Google Sheets detectada: ");
+  logMessage += googleSheetsSheetTitle;
+  Serial.println(logMessage);
+  return true;
+}
+
+String buildGoogleSheetsRange(const char* a1Range) {
+  if (googleSheetsSheetTitle.length() == 0) {
+    return String(a1Range);
+  }
+
+  String range = googleSheetsSheetTitle;
+  range += '!';
+  range += a1Range;
+  return range;
+}
+
+bool ensureGoogleSheetsHeader() {
+  if (googleSheetsHeaderEnsured) {
+    return true;
+  }
+
+  FirebaseJson response;
+  FirebaseJson valueRange;
+  valueRange.add("majorDimension", "ROWS");
+  valueRange.set("values/[0]/[0]", "timestamp_local");
+  valueRange.set("values/[0]/[1]", "epoch");
+  valueRange.set("values/[0]/[2]", "irrigador");
+  valueRange.set("values/[0]/[3]", "sensor1");
+  valueRange.set("values/[0]/[4]", "sensor2");
+  valueRange.set("values/[0]/[5]", "limite1");
+  valueRange.set("values/[0]/[6]", "limite2");
+  valueRange.set("values/[0]/[7]", "baixa_umidade1");
+  valueRange.set("values/[0]/[8]", "baixa_umidade2");
+  valueRange.set("values/[0]/[9]", "bomba1_ligada");
+  valueRange.set("values/[0]/[10]", "bomba2_ligada");
+  valueRange.set("values/[0]/[11]", "manual1");
+  valueRange.set("values/[0]/[12]", "manual2");
+  valueRange.set("values/[0]/[13]", "travada1");
+  valueRange.set("values/[0]/[14]", "travada2");
+  String headerRange = buildGoogleSheetsRange(AppConfig::GOOGLE_SHEETS_HEADER_A1_RANGE);
+
+  bool success = GSheet.values.update(
+    &response,
+    Secrets::GOOGLE_SPREADSHEET_ID,
+    headerRange,
+    &valueRange
+  );
+
+  if (!success) {
+    Serial.print("Falha ao atualizar cabecalho Google Sheets: ");
+    Serial.println(GSheet.errorReason());
+    Serial.print("Range usado: ");
+    Serial.println(headerRange);
+    return false;
+  }
+
+  googleSheetsHeaderEnsured = true;
+  Serial.println("Cabecalho Google Sheets atualizado.");
+  return true;
+}
+
+bool appendGoogleSheetsSnapshot() {
+  time_t epochNow = 0;
+  if (!getCurrentEpoch(epochNow)) {
+    Serial.println("Google Sheets aguardando relogio sincronizado.");
+    return false;
+  }
+
+  const bool pump1IsOn = digitalRead(output1) == LOW;
+  const bool pump2IsOn = digitalRead(output2) == LOW;
+  FirebaseJson response;
+  FirebaseJson valueRange;
+  valueRange.add("majorDimension", "ROWS");
+  valueRange.set("values/[0]/[0]", formatTimestamp(epochNow));
+  valueRange.set("values/[0]/[1]", String(static_cast<long long>(epochNow)));
+  valueRange.set("values/[0]/[2]", AppConfig::NOME_IRRIGADOR);
+  valueRange.set("values/[0]/[3]", String(sensor1));
+  valueRange.set("values/[0]/[4]", String(sensor2));
+  valueRange.set("values/[0]/[5]", inputMessage1);
+  valueRange.set("values/[0]/[6]", inputMessage2);
+  valueRange.set("values/[0]/[7]", flagBxHumidade1 ? "1" : "0");
+  valueRange.set("values/[0]/[8]", flagBxHumidade2 ? "1" : "0");
+  valueRange.set("values/[0]/[9]", pump1IsOn ? "1" : "0");
+  valueRange.set("values/[0]/[10]", pump2IsOn ? "1" : "0");
+  valueRange.set("values/[0]/[11]", manualOverride1 ? "1" : "0");
+  valueRange.set("values/[0]/[12]", manualOverride2 ? "1" : "0");
+  valueRange.set("values/[0]/[13]", flagBomba1Travada == 1 ? "1" : "0");
+  valueRange.set("values/[0]/[14]", flagBomba2Travada == 1 ? "1" : "0");
+  String dataRange = buildGoogleSheetsRange(AppConfig::GOOGLE_SHEETS_DATA_A1_RANGE);
+
+  bool success = GSheet.values.append(
+    &response,
+    Secrets::GOOGLE_SPREADSHEET_ID,
+    dataRange,
+    &valueRange
+  );
+
+  if (!success) {
+    Serial.print("Falha ao enviar linha para Google Sheets: ");
+    Serial.println(GSheet.errorReason());
+    Serial.print("Range usado: ");
+    Serial.println(dataRange);
+    return false;
+  }
+
+  String logMessage = F("Google Sheets atualizado em ");
+  logMessage += formatTimestamp(epochNow);
+  logMessage += F(" | S1 ");
+  logMessage += sensor1;
+  logMessage += F(" | S2 ");
+  logMessage += sensor2;
+  Serial.println(logMessage);
+  return true;
 }
 
 bool getCurrentEpoch(time_t& epochNow) {
@@ -1214,6 +1411,21 @@ void saveThresholds() {
   preferences.putString("Limite1", inputMessage1);
   preferences.putString("Limite2", inputMessage2);
   preferences.end();
+}
+
+void googleSheetsTokenStatusCallback(TokenInfo info) {
+  if (info.status == token_status_error) {
+    GSheet.printf(
+      "Google Sheets token erro: %s\n",
+      GSheet.getTokenError(info).c_str()
+    );
+    return;
+  }
+
+  GSheet.printf(
+    "Google Sheets token status: %s\n",
+    GSheet.getTokenStatus(info).c_str()
+  );
 }
 
 /* Callback function to get the Email sending status */

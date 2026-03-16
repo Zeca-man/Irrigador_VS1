@@ -3,7 +3,7 @@
 #include <Arduino.h>
 
 namespace AppConfig {
-  constexpr const char* NOME_IRRIGADOR = "IRRIGADOR_VS1_1";
+  constexpr const char* NOME_IRRIGADOR = "IRRIGADOR_VS1_Excel1";
 
   constexpr const char* NTP_SERVER = "pool.ntp.org";
   constexpr long GMT_OFFSET_SEC = -10800;
@@ -27,6 +27,9 @@ namespace AppConfig {
   constexpr int SENSOR_SAMPLE_SIZE = 5;
 
   constexpr const char* OTA_HOST = "esp32_ota";
+  constexpr unsigned long GOOGLE_SHEETS_UPDATE_INTERVAL_MS = 60000;
+  constexpr const char* GOOGLE_SHEETS_DATA_A1_RANGE = "A2";
+  constexpr const char* GOOGLE_SHEETS_HEADER_A1_RANGE = "A1:O1";
 
   constexpr int SMTP_PORT = 587;
 }
