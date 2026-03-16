@@ -125,7 +125,7 @@ void googleSheetsTokenStatusCallback(TokenInfo info);
 void startPumpCycle(PumpCycleState& cycle, bool manualMode);
 String getCycleEndReason(const PumpCycleState& cycle, bool travada, bool manualRequestedOn);
 void finishPumpCycle(uint8_t pumpNumber, PumpCycleState& cycle, bool travada, bool manualRequestedOn, long& durationSeconds);
-void handlePumpCycleTransition(uint8_t pumpNumber, bool isOn, bool& previousState, PumpCycleState& cycle, bool manualMode, bool travada, bool manualRequestedOn, long& durationSeconds);
+void handlePumpCycleTransition(uint8_t pumpNumber, bool isOn, bool& previousState, PumpCycleState& cycle, bool manualMode, bool travada, bool manualRequestedOn, bool cycleDemandActive, long& durationSeconds);
 
 const int output1 = AppConfig::OUTPUT1_PIN;  // GPIO comando rele 1
 const int output2 = AppConfig::OUTPUT2_PIN;   // GPIO comando rele 2
@@ -607,8 +607,10 @@ void loop() {
 
   bool pump1IsOn = digitalRead(output1) == LOW;
   bool pump2IsOn = digitalRead(output2) == LOW;
-  handlePumpCycleTransition(1, pump1IsOn, lastPump1OutputState, pump1CycleState, manualOverride1, flagBomba1Travada == 1, manualPump1State, tempoB1Ligada);
-  handlePumpCycleTransition(2, pump2IsOn, lastPump2OutputState, pump2CycleState, manualOverride2, flagBomba2Travada == 1, manualPump2State, tempoB2Ligada);
+  bool pump1CycleDemandActive = manualOverride1 ? manualPump1State : (flagBxHumidade1 && flagBomba1Travada == 0);
+  bool pump2CycleDemandActive = manualOverride2 ? manualPump2State : (flagBxHumidade2 && flagBomba2Travada == 0);
+  handlePumpCycleTransition(1, pump1IsOn, lastPump1OutputState, pump1CycleState, manualOverride1, flagBomba1Travada == 1, manualPump1State, pump1CycleDemandActive, tempoB1Ligada);
+  handlePumpCycleTransition(2, pump2IsOn, lastPump2OutputState, pump2CycleState, manualOverride2, flagBomba2Travada == 1, manualPump2State, pump2CycleDemandActive, tempoB2Ligada);
 
   // Temporizador para enviar email com info do valor do sensor
   unsigned long currentMillis1 = millis();
@@ -1350,14 +1352,18 @@ void finishPumpCycle(uint8_t pumpNumber, PumpCycleState& cycle, bool travada, bo
   cycle = PumpCycleState();
 }
 
-void handlePumpCycleTransition(uint8_t pumpNumber, bool isOn, bool& previousState, PumpCycleState& cycle, bool manualMode, bool travada, bool manualRequestedOn, long& durationSeconds) {
-  if (isOn && !previousState) {
+void handlePumpCycleTransition(uint8_t pumpNumber, bool isOn, bool& previousState, PumpCycleState& cycle, bool manualMode, bool travada, bool manualRequestedOn, bool cycleDemandActive, long& durationSeconds) {
+  if (isOn && !previousState && !cycle.active) {
     durationSeconds = 0;
     startPumpCycle(cycle, manualMode);
-  } else if (!isOn && previousState) {
+  }
+
+  bool shouldFinishManualCycle = cycle.active && cycle.manual && !manualRequestedOn && !isOn;
+  bool shouldFinishAutomaticCycle = cycle.active && !cycle.manual && !cycleDemandActive && !isOn;
+  bool shouldFinishTravadaCycle = cycle.active && travada;
+
+  if (shouldFinishManualCycle || shouldFinishAutomaticCycle || shouldFinishTravadaCycle) {
     finishPumpCycle(pumpNumber, cycle, travada, manualRequestedOn, durationSeconds);
-  } else if (isOn && !cycle.active) {
-    startPumpCycle(cycle, manualMode);
   }
 
   previousState = isOn;
