@@ -27,7 +27,7 @@ namespace AppConfig {
   constexpr int SENSOR_SAMPLE_SIZE = 5;
 
   constexpr const char* OTA_HOST = "esp32_ota";
-  constexpr unsigned long GOOGLE_SHEETS_UPDATE_INTERVAL_MS = 60000;
+  constexpr unsigned long GOOGLE_SHEETS_UPDATE_INTERVAL_MS = 900000; // 30 minutes
   constexpr const char* GOOGLE_SHEETS_DATA_A1_RANGE = "A2";
   constexpr const char* GOOGLE_SHEETS_HEADER_A1_RANGE = "A1:O1";
 

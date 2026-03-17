@@ -23,6 +23,7 @@
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <Update.h>
+#include <NTPClient.h>
 #include <time.h>
 #include "web_pages.h"
 #include "app_config.h"
@@ -31,6 +32,9 @@
 const char* ntpServer = AppConfig::NTP_SERVER;
 const long gmtOffset_sec = AppConfig::GMT_OFFSET_SEC;
 const int daylightOffset_sec = AppConfig::DAYLIGHT_OFFSET_SEC;
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, ntpServer, gmtOffset_sec, daylightOffset_sec);
 constexpr const char* HOURLY_LOG_PATH = "/hourly_log.csv";
 constexpr size_t HISTORY_HOURS = 24 * 7;
 constexpr size_t HISTORY_DAYS = 7;
@@ -953,6 +957,9 @@ String formatTimestamp(time_t timestamp) {
     return F("sem horario sincronizado");
   }
 
+  // Ajustar para horário de São Paulo (UTC-3)
+  timestamp -= 3 * 3600;
+
   struct tm timeinfo;
   localtime_r(&timestamp, &timeinfo);
   char buffer[24];
@@ -1467,7 +1474,7 @@ void envioemail(String htmlMsg, String assuntoEmail) {
   config.login.password = Secrets::AUTHOR_PASSWORD;
   config.login.user_domain = F("127.0.0.1");
   config.time.ntp_server = F("pool.ntp.org,time.nist.gov");
-  config.time.gmt_offset = 3;
+  config.time.gmt_offset = -3;
   config.time.day_light_offset = 0;
 
   SMTP_Message message;
